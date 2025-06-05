@@ -5,3 +5,6 @@ __pycache__/
 output/
 .vscode/
 .env
+.pytest_cache
+/temp_test_larger_growth_output/run_larger_gbo
+/temp_test_vascular_growth_output
