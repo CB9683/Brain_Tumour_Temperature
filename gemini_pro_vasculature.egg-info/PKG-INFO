@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: gemini-pro-vasculature
+Version: 0.1.0
+Summary: Simulation framework for vascular growth and tumour angiogenesis.
+Author: Christian Behler
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: pyyaml
+Requires-Dist: nibabel
+Requires-Dist: numpy
+Requires-Dist: pyvista>=0.38
+Requires-Dist: networkx
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+
+# GEMINI_PRO_VASCULATURE
+
+Vessel growth and angiogenesis simulation toolkit.

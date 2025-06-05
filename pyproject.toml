@@ -1,16 +1,42 @@
-# Save this as pyproject.toml
+# pyproject.toml
+
 [project]
-name = "gemini_pro_vasculature"
+name = "gemini-pro-vasculature" # Use hyphens for PyPI compatibility
 version = "0.1.0"
 description = "Simulation framework for vascular growth and tumour angiogenesis."
 authors = [{name = "Christian Behler"}]
 readme = "README.md"
 requires-python = ">=3.8"
+dependencies = [
+    "pyyaml",
+    "nibabel",
+    "numpy",
+    "pyvista>=0.38",
+    "networkx",
+    # Add other runtime dependencies here
+]
 
-[tool.setuptools]
-packages = ["src"]
-package-dir = {"" = "src"}
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+
+# Example of how you might set up an entry point if main.py was inside src
+# [project.scripts]
+# gbo-sim = "src.main_entry:main" # Assuming src/main_entry.py with def main()
 
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=61.0"] # Good to specify a modern setuptools version
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+# The package to install is named 'src' and is found directly in the ./src/ directory.
+packages = ["src"]
+# REMOVE or comment out package-dir:
+# package-dir = {"" = "src"}  # <<< THIS IS THE PROBLEMATIC LINE
+
+# If you want to be very explicit with find:
+# [tool.setuptools.packages.find]
+# where = ["."] # Look for packages in the current directory (where pyproject.toml is)
+# include = ["src*"] # Include the 'src' package

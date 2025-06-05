@@ -1,0 +1,9 @@
+pyyaml
+nibabel
+numpy
+pyvista>=0.38
+networkx
+
+[dev]
+pytest
+pytest-cov

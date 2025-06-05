@@ -1,0 +1,135 @@
+# config.yaml
+paths:
+  output_dir: "output/simulation_results" # Base directory for outputs
+  # Input NIfTI files for tissue segmentation
+  wm_nifti: "data/sample_brain_wm.nii.gz"
+  gm_nifti: "data/sample_brain_gm.nii.gz"
+  csf_nifti: "data/sample_brain_csf.nii.gz" # Optional
+  tumor_nifti: "data/sample_tumor.nii.gz" # Optional, for angiogenesis simulation
+
+  # Input arterial centerlines (VTP or TXT)
+  # These define roots and terminals of measured vasculature.
+  # Synthetic vessels sprout from these terminal points.
+  arterial_centerlines: "data/sample_arteries.vtp"
+
+simulation:
+  simulation_name: "gbo_default_run" # Used for naming output subfolder
+  random_seed: 42
+  log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
+  units:
+    length: "mm"
+    pressure: "Pa"
+    flow_rate: "mm^3/s" # e.g., mm^3/s
+    # Ensure constants.py and parameters below match these units
+
+tissue_properties:
+  # Metabolic rates (blood flow demand per unit volume of tissue, per unit time)
+  # Units: e.g., (mm^3_blood / s) / mm^3_tissue = 1/s
+  metabolic_rates:
+    gm: 0.0167    # Corresponds to ~60 ml/min/100g
+    wm: 0.0056    # Corresponds to ~20 ml/min/100g
+    csf: 0.0
+    tumor_rim: 0.0334 # Higher demand at tumor rim
+    tumor_core: 0.0083 # Potentially lower in necrotic core
+    # If only 'tumor' key exists, it's used for all tumor voxels.
+    # If 'tumor_rim' and 'tumor_core' exist, they are used with corresponding segmentations.
+
+  # Tissue permeability for Darcy's Law (e.g., in mm^2 if length is mm)
+  permeability:
+    gm: 1.0e-7
+    wm: 5.0e-8
+    tumor: 2.0e-7 # Tumors often have higher permeability
+
+vascular_properties:
+  blood_viscosity: 0.0035 # Pa.s (3.5 cP)
+  murray_law_exponent: 3.0
+  # Initial flow for newly sprouted synthetic terminals before their territory is defined
+  initial_terminal_flow: 1.0e-6 # e.g., mm^3/s
+  # Minimum and maximum geometric constraints for synthetic vessels
+  min_segment_length: 0.1 # mm
+  max_segment_length: 2.0 # mm
+  min_radius: 0.005 # mm (e.g. 5 microns, capillary scale)
+  # Relationship: r_i = K_murray * Q_i^(1/murray_law_exponent)
+  # K_murray can be derived or set. For now, let's assume it's implicitly handled by radius updates
+  # or can be added if explicit scaling is needed.
+  # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
+
+gbo_growth: # Parameters for the Growth-Based Optimization algorithm
+  max_iterations: 100
+  # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
+  # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
+  # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
+  # If E_flow (8*mu*L*Q^2 / (PI*r^4)) is in mW, then units are consistent.
+  # Viscosity in Pa.s = (N/m^2).s. Length in m. Q in m^3/s. Radius in m.
+  # Pa.s * m * (m^3/s)^2 / m^4 = (N/m^2).s * m * m^6/s^2 / m^4 = N.m/s = W (Watts)
+  # So if using mm, need to convert: 1 W = 1000 mW. 1 m = 1000 mm.
+  # C_met (W/m^3) -> C_met * (1000 mW / (1000mm)^3) = C_met * 1e-6 mW/mm^3
+  energy_coefficient_C_met_vessel_wall: 1.0e-1 # mW/mm^3 (example, needs calibration)
+
+  # Fraction of total metabolic demand that the GBO aims to satisfy.
+  target_perfusion_level: 0.95
+  
+  # Criteria for triggering a bifurcation attempt for a terminal
+  branching_trigger_radius_factor: 1.5 # Branch if current radius > factor * radius_at_last_branch (or initial)
+  branching_trigger_territory_voxels: 500 # Branch if territory size (num voxels) exceeds this
+  
+  # Parameters for searching for optimal bifurcation
+  bifurcation_candidate_points: 10 # Number of candidate locations for new child terminals
+  bifurcation_angle_min_deg: 30.0  # Minimum angle between child branches
+  bifurcation_angle_max_deg: 120.0 # Maximum angle between child branches
+  bifurcation_length_factor_parent_radius: 10.0 # New segment length as factor of parent radius ( heuristic for new terminal placement)
+
+  # Stop conditions for GBO growth
+  stop_criteria:
+    # For a branch originating from a measured artery terminal:
+    # Stop growing this specific branch if its synthetic segment's radius (connecting to the measured terminal)
+    # becomes 'max_radius_factor_measured' times the measured terminal's original radius.
+    max_radius_factor_measured: 1.0
+    min_flow_improvement: 1.0e-8 # Stop if total perfused flow doesn't improve significantly
+    min_radius_for_growth: 0.005 # mm, stop growing branches if they become too small
+
+
+tumor_angiogenesis:
+  enabled: false # Set to true to run tumor angiogenesis after healthy growth
+  # Criteria for selecting existing healthy vessels as sprouting points
+  sprouting_vessel_min_radius: 0.05 # mm (e.g., arterioles)
+  sprouting_distance_to_tumor_max: 2.0 # mm (max distance from vessel to tumor edge for sprouting)
+  
+  # Growth parameters for tumor vessels
+  num_sprouts_per_iteration: 5
+  max_tumor_vessels_total: 500 # Limit total number of new tumor vessel segments
+  growth_bias_strength_to_tumor_rim: 0.7 # Bias for random walk (0-1)
+  growth_bias_strength_to_tumor_center: 0.3 # If rim is satisfied, grow towards center
+
+  # Pathological vessel characteristics
+  segment_length_mean_tumor: 0.2 # mm (shorter segments)
+  segment_length_std_tumor: 0.05 # mm
+  tortuosity_factor: 1.2 # Multiplier for path length or random angle changes
+  murray_law_deviation_factor: 0.1 # e.g., 10% deviation allowed from ideal Murray's law sums
+
+perfusion_solver:
+  enabled: false # Set to true to run perfusion modeling after vascular growth
+  # For 1D network flow solver
+  inlet_pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
+  # Outlet condition: either fixed pressure at venous terminals or resistance model
+  outlet_pressure_venous: 2000 # Pa (approx 15 mmHg)
+  # Or, outlet_resistance_venous: value
+
+  # For 3D tissue perfusion (Darcy model)
+  # K is in tissue_properties
+  darcy_solver_max_iter: 1000
+  darcy_solver_tolerance: 1.0e-6
+
+  # For 1D/3D coupling: Q_terminal = coupling_beta * (P_vessel_terminal - P_tissue_at_terminal)
+  coupling_beta: 1.0e-7 # mm^3 / (s*Pa) (if units are mm, s, Pa)
+  max_iterations_coupling: 20
+  convergence_tolerance_coupling: 1.0e-4 # Relative change in flow/pressure
+
+visualization:
+  save_intermediate_steps: false # If true, save tree/maps at certain GBO iterations
+  intermediate_step_interval: 10 # Save every N iterations
+  plot_slice_axis: "axial" # 'axial', 'sagittal', 'coronal' for 2D overlay plots
+  plot_slice_index: -1 # Index of slice to plot (-1 for middle slice)
+  pyvista_background_color: "white"
+  pyvista_cmap_perfusion: "viridis"
+  pyvista_cmap_pressure: "coolwarm"
