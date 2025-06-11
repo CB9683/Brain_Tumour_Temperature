@@ -2,18 +2,18 @@
 paths:
   output_dir: "output/simulation_results" # Base directory for outputs
   # Input NIfTI files for tissue segmentation
-  wm_nifti: "data/sample_brain_wm.nii.gz"
-  gm_nifti: "data/sample_brain_gm.nii.gz"
-  csf_nifti: "data/sample_brain_csf.nii.gz" # Optional
+  wm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_wm_mask.nii.gz"
+  gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_gm_mask.nii.gz"
+  csf_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_csf_mask.nii.gz" # Optional
   tumor_nifti: "data/sample_tumor.nii.gz" # Optional, for angiogenesis simulation
 
   # Input arterial centerlines (VTP or TXT)
   # These define roots and terminals of measured vasculature.
   # Synthetic vessels sprout from these terminal points.
-  arterial_centerlines: "data/sample_arteries.vtp"
+  arterial_centerlines: "" # "data/sample_arteries.vtp"
 
 simulation:
-  simulation_name: "gbo_default_run" # Used for naming output subfolder
+  simulation_name: "mida_gbo_seeds" # Used for naming output subfolder
   random_seed: 42
   log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
   units:
@@ -38,16 +38,17 @@ tissue_properties:
   permeability:
     gm: 1.0e-7
     wm: 5.0e-8
-    tumor: 2.0e-7 # Tumors often have higher permeability
+    tumor: "" # 2.0e-7 # Tumors often have higher permeability
 
 vascular_properties:
   blood_viscosity: 0.0035 # Pa.s (3.5 cP)
-  murray_law_exponent: 3.0
+  murray_law_exponent: 2.7
+  k_murray_scaling_factor: 0.5
   # Initial flow for newly sprouted synthetic terminals before their territory is defined
-  initial_terminal_flow: 1.0e-6 # e.g., mm^3/s
+  initial_terminal_flow: 1.0e-4 # e.g., mm^3/s
   # Minimum and maximum geometric constraints for synthetic vessels
   min_segment_length: 0.1 # mm
-  max_segment_length: 2.0 # mm
+  max_segment_length: 3.0 # mm
   min_radius: 0.005 # mm (e.g. 5 microns, capillary scale)
   # Relationship: r_i = K_murray * Q_i^(1/murray_law_exponent)
   # K_murray can be derived or set. For now, let's assume it's implicitly handled by radius updates
@@ -55,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 100
+  max_iterations: 50
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -65,14 +66,24 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   # So if using mm, need to convert: 1 W = 1000 mW. 1 m = 1000 mm.
   # C_met (W/m^3) -> C_met * (1000 mW / (1000mm)^3) = C_met * 1e-6 mW/mm^3
   energy_coefficient_C_met_vessel_wall: 1.0e-1 # mW/mm^3 (example, needs calibration)
+  initial_territory_radius: 1.0 
 
+  frontier_search_radius_factor: 3.0 # Multiplies terminal radius
+  frontier_search_radius_fixed: 1.5  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
+  max_voxels_for_Rip: 50             # Max voxels in a new frontier patch (was 30-50)
+  max_flow_single_terminal: 0.001   # mm^3/s (Max flow before forcing branch. Was 0.0005)
   # Fraction of total metabolic demand that the GBO aims to satisfy.
-  target_perfusion_level: 0.95
-  
+  target_perfusion_level: 0.8
+  target_domain_perfusion_fraction: 0.8
+
   # Criteria for triggering a bifurcation attempt for a terminal
   branching_trigger_radius_factor: 1.5 # Branch if current radius > factor * radius_at_last_branch (or initial)
   branching_trigger_territory_voxels: 500 # Branch if territory size (num voxels) exceeds this
-  
+  branch_radius_increase_threshold: 1.1
+  min_iterations_before_no_growth_stop: 5
+
+
+
   # Parameters for searching for optimal bifurcation
   bifurcation_candidate_points: 10 # Number of candidate locations for new child terminals
   bifurcation_angle_min_deg: 30.0  # Minimum angle between child branches
@@ -87,7 +98,14 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
     max_radius_factor_measured: 1.0
     min_flow_improvement: 1.0e-8 # Stop if total perfused flow doesn't improve significantly
     min_radius_for_growth: 0.005 # mm, stop growing branches if they become too small
-
+  
+  seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
+    - id: "seed_A"
+      position: [40, 60, 67] # e.g., [10.0, 25.5, -30.1] in mm
+      initial_radius: 0.3 # mm
+    - id: "seed_B"
+      position: [-4, 60, 60]
+      initial_radius: 0.25 # mm
 
 tumor_angiogenesis:
   enabled: false # Set to true to run tumor angiogenesis after healthy growth
@@ -127,7 +145,7 @@ perfusion_solver:
 
 visualization:
   save_intermediate_steps: false # If true, save tree/maps at certain GBO iterations
-  intermediate_step_interval: 10 # Save every N iterations
+  intermediate_step_interval: 5 # Save every N iterations
   plot_slice_axis: "axial" # 'axial', 'sagittal', 'coronal' for 2D overlay plots
   plot_slice_index: -1 # Index of slice to plot (-1 for middle slice)
   pyvista_background_color: "white"

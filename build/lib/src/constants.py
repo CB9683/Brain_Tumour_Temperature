@@ -51,3 +51,7 @@ DEFAULT_VOXEL_SIZE_MM = 1.0 # Default isotropic voxel size in mm, if not from NI
 
 # Small epsilon for numerical stability
 EPSILON = 1e-9
+
+
+MIN_VESSEL_RADIUS_MM = 0.005 # example, 5 microns in mm
+INITIAL_TERMINAL_FLOW_Q = 1e-6 # mm^3/s

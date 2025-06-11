@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import time
+import numpy as np
 
 from src import config_manager, io_utils, utils
 from src import data_structures # For type hinting and initial object creation

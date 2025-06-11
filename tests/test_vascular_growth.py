@@ -235,7 +235,7 @@ def larger_synthetic_tissue_and_config():
         },
         "tissue_properties": {"metabolic_rates": {"gm": 0.016, "wm": 0.005}, "permeability": {}},
         "vascular_properties": {
-            "blood_viscosity": constants.DEFAULT_BLOOD_VISCOSITY, "murray_law_exponent": 3.0,
+            "blood_viscosity": constants.DEFAULT_BLOOD_VISCOSITY, "murray_law_exponent": 2.7,
             "initial_terminal_flow": 1e-4, "min_radius": 0.005, "k_murray_scaling_factor": 0.5,
             "min_segment_length": 0.1, "max_segment_length": 1.0, # Smaller max seg length
         },

@@ -17,5 +17,6 @@ src/utils.py
 src/vascular_growth.py
 src/visualization.py
 tests/test_config_manager.py
+tests/test_energy_model.py
 tests/test_io_utils.py
 tests/test_vascular_growth.py
