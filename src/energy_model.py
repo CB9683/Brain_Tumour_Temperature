@@ -93,6 +93,158 @@ def calculate_bifurcation_loss(
     return total_loss
 
 
+
+def find_optimal_bifurcation_for_combined_territory(
+    parent_terminal_gbo_data: object, # GBOIterationData for the terminal that will bifurcate
+    # Combined territory: parent's old territory + new frontier region
+    combined_territory_voxel_indices_flat: np.ndarray, 
+    tissue_data: dict,
+    config: dict,
+    k_murray_factor: float,
+    murray_exponent: float
+) -> Optional[Tuple[np.ndarray, float, float, np.ndarray, float, float, float]]:
+    """
+    Searches for an optimal bifurcation for the parent_terminal to supply a 
+    COMBINED territory (its old territory + a new growth region).
+    The children C1 and C2 will share the total demand of this combined_territory.
+    
+    Args:
+        parent_terminal_gbo_data: GBOIterationData of the branching terminal.
+        combined_territory_voxel_indices_flat: Flat indices of ALL voxels 
+                                               (old territory + new frontier) to be supplied.
+        tissue_data: Full tissue data dict.
+        config: Simulation config.
+        k_murray_factor, murray_exponent: For radius calculation.
+
+    Returns:
+        Tuple (child1_pos, child1_radius, child1_total_flow, 
+               child2_pos, child2_radius, child2_total_flow, min_loss_for_new_segments) 
+        or None if no suitable bifurcation found.
+        The child flows are their respective total target flows.
+    """
+    parent_id = parent_terminal_gbo_data.id
+    parent_pos = parent_terminal_gbo_data.pos # This is the bifurcation point
+    logger.debug(f"Finding optimal bifurcation for {parent_id} at {np.round(parent_pos,3)} to supply combined "
+                 f"territory of {len(combined_territory_voxel_indices_flat)} voxels.")
+
+    if len(combined_territory_voxel_indices_flat) == 0:
+        logger.debug(f"Terminal {parent_id}: Combined target territory is empty. No bifurcation.")
+        return None
+
+    # Get world coordinates and demand for ALL voxels in the combined territory
+    combined_voxels_world_coords = tissue_data['world_coords_flat'][combined_territory_voxel_indices_flat]
+    
+    demand_map_3d_indices = tissue_data['voxel_indices_flat'][combined_territory_voxel_indices_flat]
+    demand_per_combined_voxel_qmet = tissue_data['metabolic_demand_map'][
+        demand_map_3d_indices[:,0],
+        demand_map_3d_indices[:,1],
+        demand_map_3d_indices[:,2]
+    ]
+    demand_of_combined_voxels_flow = demand_per_combined_voxel_qmet * tissue_data['voxel_volume']
+    total_demand_of_combined_territory = np.sum(demand_of_combined_voxels_flow)
+
+    if total_demand_of_combined_territory < constants.EPSILON:
+        logger.debug(f"Terminal {parent_id}: Total demand in combined territory is negligible. No bifurcation.")
+        return None
+
+    num_candidate_location_sets = config_manager.get_param(config, "gbo_growth.bifurcation_candidate_points", 10)
+    min_seg_len = config_manager.get_param(config, "vascular_properties.min_segment_length", 0.1)
+    min_radius = config_manager.get_param(config, "vascular_properties.min_radius", constants.MIN_VESSEL_RADIUS_MM)
+
+    best_bifurcation_params = None
+    min_loss_found = np.inf
+
+    if len(combined_voxels_world_coords) < 2:
+        logger.debug(f"Terminal {parent_id}: Combined territory too small ({len(combined_voxels_world_coords)} voxels) "
+                     "for meaningful bifurcation. Consider extension.")
+        return None # Bifurcation needs to split demand between two children
+
+    # Candidate child locations should be within or near the combined_territory
+    # (KMeans or random sampling on combined_voxels_world_coords)
+    for i in range(num_candidate_location_sets):
+        c1_pos_candidate, c2_pos_candidate = None, None
+        # --- 1. Generate candidate child locations (c1_pos, c2_pos) based on combined_territory ---
+        # (Using KMeans as before, but on combined_voxels_world_coords)
+        if SKLEARN_AVAILABLE and KMeans is not None:
+            try:
+                n_clust = min(2, len(combined_voxels_world_coords))
+                if n_clust < 2: # Should be caught by len(combined_voxels_world_coords) < 2 above
+                    continue 
+                kmeans = KMeans(n_clusters=n_clust, random_state=i, n_init='auto').fit(combined_voxels_world_coords)
+                c1_pos_candidate = kmeans.cluster_centers_[0]
+                c2_pos_candidate = kmeans.cluster_centers_[1]
+            except Exception as e_km:
+                logger.warning(f"KMeans failed for combined territory (iter {i}): {e_km}. Fallback.")
+                indices = np.random.choice(len(combined_voxels_world_coords), 2, replace=False)
+                c1_pos_candidate = combined_voxels_world_coords[indices[0]]
+                c2_pos_candidate = combined_voxels_world_coords[indices[1]]
+        else:
+            if i == 0 and not SKLEARN_AVAILABLE : logger.warning("Sklearn KMeans not available for child placement.")
+            indices = np.random.choice(len(combined_voxels_world_coords), 2, replace=False)
+            c1_pos_candidate = combined_voxels_world_coords[indices[0]]
+            c2_pos_candidate = combined_voxels_world_coords[indices[1]]
+
+        if utils.distance(parent_pos, c1_pos_candidate) < min_seg_len or \
+           utils.distance(parent_pos, c2_pos_candidate) < min_seg_len or \
+           utils.distance(c1_pos_candidate, c2_pos_candidate) < min_seg_len:
+            continue
+
+        # --- 2. Assign ALL voxels in combined_territory to c1 or c2 ---
+        # This determines Q_C1_total and Q_C2_total for the candidate children.
+        q_c1_total_candidate = 0.0
+        q_c2_total_candidate = 0.0
+        
+        for idx_in_combined, voxel_wc in enumerate(combined_voxels_world_coords):
+            dist_sq_to_c1 = utils.distance_squared(voxel_wc, c1_pos_candidate)
+            dist_sq_to_c2 = utils.distance_squared(voxel_wc, c2_pos_candidate)
+            if dist_sq_to_c1 <= dist_sq_to_c2:
+                q_c1_total_candidate += demand_of_combined_voxels_flow[idx_in_combined]
+            else:
+                q_c2_total_candidate += demand_of_combined_voxels_flow[idx_in_combined]
+        
+        if q_c1_total_candidate < constants.EPSILON or q_c2_total_candidate < constants.EPSILON:
+            # This means one child would get (almost) no flow from the entire combined territory.
+            # This might be a poor bifurcation unless the other child takes nearly all.
+            # Forcing both to have substantial flow might be too restrictive.
+            # Let it proceed if total demand is met.
+            if abs(q_c1_total_candidate + q_c2_total_candidate - total_demand_of_combined_territory) > constants.EPSILON * total_demand_of_combined_territory:
+                 logger.warning(f"Demand conservation issue in child assignment: sum_child_Q={q_c1_total_candidate+q_c2_total_candidate:.2e}, total_demand={total_demand_of_combined_territory:.2e}")
+                 continue # Skip if total demand not conserved by split
+
+        # --- 3. Calculate radii for c1, c2 based on their TOTAL flows ---
+        r_c1_candidate = k_murray_factor * (q_c1_total_candidate ** (1.0 / murray_exponent)) if q_c1_total_candidate > constants.EPSILON else min_radius
+        r_c2_candidate = k_murray_factor * (q_c2_total_candidate ** (1.0 / murray_exponent)) if q_c2_total_candidate > constants.EPSILON else min_radius
+        r_c1_candidate = max(min_radius, r_c1_candidate)
+        r_c2_candidate = max(min_radius, r_c2_candidate)
+
+        # --- 4. Calculate loss for this candidate bifurcation (for the two new child segments) ---
+        # Flows used here are q_c1_total_candidate and q_c2_total_candidate
+        current_loss = calculate_bifurcation_loss(
+            parent_pos, # Bifurcation point
+            c1_pos_candidate, r_c1_candidate, q_c1_total_candidate,
+            c2_pos_candidate, r_c2_candidate, q_c2_total_candidate,
+            config
+        )
+
+        if current_loss < min_loss_found:
+            min_loss_found = current_loss
+            best_bifurcation_params = (c1_pos_candidate.copy(), r_c1_candidate, q_c1_total_candidate,
+                                       c2_pos_candidate.copy(), r_c2_candidate, q_c2_total_candidate,
+                                       min_loss_found)
+
+    if best_bifurcation_params:
+        logger.info(f"Optimal bifurcation for {parent_id} (supplying combined territory) chosen (Loss {best_bifurcation_params[6]:.3e}): "
+                    f"C1 (R={best_bifurcation_params[1]:.4f}, Q_total={best_bifurcation_params[2]:.2e}), "
+                    f"C2 (R={best_bifurcation_params[4]:.4f}, Q_total={best_bifurcation_params[5]:.2e})")
+        return best_bifurcation_params
+    else:
+        logger.debug(f"No suitable bifurcation found for terminal {parent_id} to supply combined territory.")
+        return None
+
+# The __main__ test block in energy_model.py would need to be updated to call this new function
+# and provide mock data for a "combined_territory".
+
+
 def find_optimal_bifurcation_for_new_region(
     parent_terminal_gbo_data: object, 
     new_growth_region_voxel_indices_flat: np.ndarray, 
@@ -348,7 +500,7 @@ if __name__ == '__main__':
         'voxel_volume': mock_voxel_vol
     }
     
-    bifurcation_result = find_optimal_bifurcation_for_new_region(
+    bifurcation_result = find_optimal_bifurcation_for_combined_territory(
         parent_term,
         mock_new_growth_indices_flat, # These are indices into the arrays in mock_tissue_data
         mock_tissue_data,

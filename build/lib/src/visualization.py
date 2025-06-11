@@ -132,11 +132,14 @@ def plot_vascular_tree_pyvista(
                 if u in node_to_idx and v in node_to_idx:
                     lines.extend([2, node_to_idx[u], node_to_idx[v]])
             
-            if not lines:
-                tree_mesh = pv.PolyData(points_np) # Point cloud
+            if not lines: # If there are no edges (lines is empty)
+                tree_mesh = pv.PolyData(points_np) # Plot as a point cloud
                 if tree_mesh.n_points > 0:
-                    # Glyph spheres at points, scaled by radius
+                    # For point clouds, we need to ensure 'radius' is point data
+                    tree_mesh.point_data['radius'] = radii_np # Assign radii to points
+                    # The error happens on the next line:
                     spheres = pv.Sphere(radius=0.01).glyph(scale='radius', factor=0.5, geom=tree_mesh, progress_bar=True) 
+                    plotter.add_mesh(spheres, scalars='radius', cmap=cmap_radius, scalar_bar_args={'title': 'Radius (mm)'})
                     plotter.add_mesh(spheres, scalars='radius', cmap=cmap_radius, scalar_bar_args={'title': 'Radius (mm)'})
             else:
                 tree_mesh = pv.PolyData(points_np, lines=np.array(lines))

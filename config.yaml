@@ -56,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 50
+  max_iterations: 10
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
