@@ -151,3 +151,5 @@ visualization:
   pyvista_background_color: "white"
   pyvista_cmap_perfusion: "viridis"
   pyvista_cmap_pressure: "coolwarm"
+  pyvista_cmap_radius: "plasma"  # Or "viridis", "coolwarm", etc.
+  seed_marker_radius_scale: 3.0 # Adjust for good visibility of seed markers
