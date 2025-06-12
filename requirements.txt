@@ -1,0 +1,11 @@
+matplotlib==3.10.3
+networkx==3.4.2
+nibabel==5.3.2
+numpy==2.3.0
+pandas==2.3.0
+pytest==8.3.5
+pyvista==0.45.2
+PyYAML==6.0.2
+PyYAML==6.0.2
+scikit_learn==1.7.0
+scipy==1.15.3

@@ -7,19 +7,23 @@ description = "Simulation framework for vascular growth and tumour angiogenesis.
 authors = [{name = "Christian Behler"}]
 readme = "README.md"
 requires-python = ">=3.8"
+# Here comes your requirement list:
 dependencies = [
-    "pyyaml",
-    "nibabel",
-    "numpy",
-    "pyvista>=0.38",
-    "networkx",
-    # Add other runtime dependencies here
+    "matplotlib==3.10.3",
+    "networkx==3.4.2",
+    "nibabel==5.3.2",
+    "numpy==2.3.0",
+    "pandas==2.3.0",
+    "pyvista==0.45.2",
+    "PyYAML==6.0.2",
+    "scikit-learn==1.7.0",
+    "scipy==1.15.3"
 ]
 
 [project.optional-dependencies]
+# You can add an "extra" for dev/testing tools:
 dev = [
-    "pytest",
-    "pytest-cov",
+    "pytest==8.3.5"
 ]
 
 # Example of how you might set up an entry point if main.py was inside src
