@@ -75,6 +75,9 @@ def initialize_perfused_territory_and_terminals(
                 node_attrs_sprout.pop('current_territory_demand', None) # Not a graph attribute
                 data_structures.add_node_to_graph(gbo_graph, term_gbo_data.id, **node_attrs_sprout)
 
+                data_structures.add_node_to_graph(gbo_graph, term_gbo_data.id, **vars(term_gbo_data))
+                gbo_graph.nodes[term_gbo_data.id]['Q_flow'] = term_gbo_data.flow
+                gbo_graph.nodes[term_gbo_data.id]['radius'] = term_gbo_data.radius
                 data_structures.add_edge_to_graph(gbo_graph, node_id, term_gbo_data.id, length=0.0, type='synthetic_sprout')
                 if gbo_graph.has_node(node_id): gbo_graph.nodes[node_id]['type'] = 'measured_bifurcation_or_segment'
                 
@@ -105,6 +108,9 @@ def initialize_perfused_territory_and_terminals(
                 node_attributes_seed.pop('current_territory_voxel_indices_flat', None)
                 node_attributes_seed.pop('current_territory_demand', None)
                 data_structures.add_node_to_graph(gbo_graph, term_gbo_data.id, **node_attributes_seed)
+                data_structures.add_node_to_graph(gbo_graph, term_gbo_data.id, **vars(term_gbo_data))
+                gbo_graph.nodes[term_gbo_data.id]['Q_flow'] = term_gbo_data.flow
+                gbo_graph.nodes[term_gbo_data.id]['radius'] = term_gbo_data.radius
                 logger.info(f"Initialized synthetic terminal from config seed: {term_gbo_data.id} at {np.round(seed_pos,2)} "
                             f"with R={seed_initial_radius:.4f}, initial Q={seed_initial_flow:.2e}")
                 next_synthetic_node_id += 1
@@ -132,6 +138,9 @@ def initialize_perfused_territory_and_terminals(
                 node_attrs_fallback.pop('current_territory_voxel_indices_flat', None)
                 node_attrs_fallback.pop('current_territory_demand', None)
                 data_structures.add_node_to_graph(gbo_graph, term_gbo_data.id, **node_attrs_fallback)
+                data_structures.add_node_to_graph(gbo_graph, term_gbo_data.id, **vars(term_gbo_data))
+                gbo_graph.nodes[term_gbo_data.id]['Q_flow'] = term_gbo_data.flow
+                gbo_graph.nodes[term_gbo_data.id]['radius'] = term_gbo_data.radius
                 logger.info(f"Initialized fallback seed terminal {term_gbo_data.id} at {np.round(seed_point_world,2)}.")
                 next_synthetic_node_id +=1
             else: logger.error("Cannot find a valid seed point within domain_mask/GM/WM for fallback.")
@@ -427,6 +436,11 @@ def grow_healthy_vasculature(config: dict,
                             data_structures.add_edge_to_graph(gbo_graph, term_p_gbo_data.id, child_gbo.id, 
                                                               length=child_gbo.length_from_parent, radius=new_parent_radius, # Edge radius from parent
                                                               type='synthetic_segment')
+                            data_structures.add_node_to_graph(gbo_graph, child_gbo.id, **vars(child_gbo))
+                            gbo_graph.nodes[child_gbo.id]['Q_flow'] = child_flow
+                            gbo_graph.nodes[child_gbo.id]['radius'] = child_rad
+                            data_structures.add_edge_to_graph(gbo_graph, term_p_gbo_data.id, child_gbo.id,
+                                                              length=child_gbo.length_from_parent, type='synthetic_segment')
                         
                         for v_idx_flat in frontier_voxels_global_flat_indices:
                             v_3d_idx = tuple(tissue_data['voxel_indices_flat'][v_idx_flat])
