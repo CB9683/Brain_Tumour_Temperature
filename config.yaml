@@ -56,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 10
+  max_iterations: 20
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -70,7 +70,7 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
 
   frontier_search_radius_factor: 3.0 # Multiplies terminal radius
   frontier_search_radius_fixed: 1.5  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
-  max_voxels_for_Rip: 50             # Max voxels in a new frontier patch (was 30-50)
+  max_voxels_for_Rip: 200             # Max voxels in a new frontier patch (was 30-50)
   max_flow_single_terminal: 0.001   # mm^3/s (Max flow before forcing branch. Was 0.0005)
   # Fraction of total metabolic demand that the GBO aims to satisfy.
   target_perfusion_level: 0.8
@@ -102,10 +102,10 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
     - id: "seed_A"
       position: [40, 60, 67] # e.g., [10.0, 25.5, -30.1] in mm
-      initial_radius: 0.3 # mm
+      initial_radius: 0.5 # mm
     - id: "seed_B"
       position: [-4, 60, 60]
-      initial_radius: 0.25 # mm
+      initial_radius: 0.3 # mm
 
 tumor_angiogenesis:
   enabled: false # Set to true to run tumor angiogenesis after healthy growth

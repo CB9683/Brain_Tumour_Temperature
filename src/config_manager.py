@@ -126,8 +126,9 @@ def create_default_config(config_path: str = "config.yaml"):
         "perfusion_solver": {
             "enabled": True,
             "inlet_pressure": 10000, # Pa (approx 75 mmHg)
-            "outlet_pressure_venous": 2000, # Pa (approx 15 mmHg, for network solver if applicable)
+            "terminal_outlet_pressure": 2000, # Pa (approx 15 mmHg, for network solver if applicable)
             "coupling_beta": constants.DEFAULT_COUPLING_BETA, # mm^3 / (s*Pa)
+            "use_flow_sinks_for_terminals": True, # Example, if we add options later
             "max_iterations_coupling": 20,
             "convergence_tolerance_coupling": 1e-4,
             "darcy_solver_max_iter": 1000,
