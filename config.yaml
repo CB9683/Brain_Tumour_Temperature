@@ -42,7 +42,7 @@ tissue_properties:
 
 vascular_properties:
   blood_viscosity: 0.0035 # Pa.s (3.5 cP)
-  murray_law_exponent: 2.7
+  murray_law_exponent: 3
   k_murray_scaling_factor: 0.5
   # Initial flow for newly sprouted synthetic terminals before their territory is defined
   initial_terminal_flow: 1.0e-4 # e.g., mm^3/s
@@ -56,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 20
+  max_iterations: 8
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -82,7 +82,7 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   branch_radius_increase_threshold: 1.1
   min_iterations_before_no_growth_stop: 5
 
-
+  flow_solver_interval: 1     # Run flow solver every 1 GBO iteration. Increase to e.g. 5 or 10 for speed if needed later.
 
   # Parameters for searching for optimal bifurcation
   bifurcation_candidate_points: 10 # Number of candidate locations for new child terminals
@@ -106,6 +106,10 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
     - id: "seed_B"
       position: [-4, 60, 60]
       initial_radius: 0.3 # mm
+
+perfusion_solver:
+  inlet:pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
+  terminall_outlet_pressure: 2000 # Pa (approx 15 mmHg)
 
 tumor_angiogenesis:
   enabled: false # Set to true to run tumor angiogenesis after healthy growth
@@ -148,8 +152,11 @@ visualization:
   intermediate_step_interval: 5 # Save every N iterations
   plot_slice_axis: "axial" # 'axial', 'sagittal', 'coronal' for 2D overlay plots
   plot_slice_index: -1 # Index of slice to plot (-1 for middle slice)
-  pyvista_background_color: "white"
-  pyvista_cmap_perfusion: "viridis"
   pyvista_cmap_pressure: "coolwarm"
   pyvista_cmap_radius: "plasma"  # Or "viridis", "coolwarm", etc.
   seed_marker_radius_scale: 3.0 # Adjust for good visibility of seed markers
+  pyvista_background_color: "lightgrey"
+  pyvista_cmap_radius: "plasma"
+  seed_marker_radius_scale: 5.0 # Adjust for visibility
+  domain_mask_color: "gray"     # Or any other color
+  domain_mask_opacity: 0.1      # Adjust for visibility
