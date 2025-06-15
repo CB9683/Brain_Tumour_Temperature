@@ -48,7 +48,7 @@ vascular_properties:
   initial_terminal_flow: 1.0e-4 # e.g., mm^3/s
   # Minimum and maximum geometric constraints for synthetic vessels
   min_segment_length: 0.1 # mm
-  max_segment_length: 3.0 # mm
+  max_segment_length: 5 # mm
   min_radius: 0.005 # mm (e.g. 5 microns, capillary scale)
   # Relationship: r_i = K_murray * Q_i^(1/murray_law_exponent)
   # K_murray can be derived or set. For now, let's assume it's implicitly handled by radius updates
@@ -56,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 8
+  max_iterations: 12
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -66,18 +66,18 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   # So if using mm, need to convert: 1 W = 1000 mW. 1 m = 1000 mm.
   # C_met (W/m^3) -> C_met * (1000 mW / (1000mm)^3) = C_met * 1e-6 mW/mm^3
   energy_coefficient_C_met_vessel_wall: 1.0e-1 # mW/mm^3 (example, needs calibration)
-  initial_territory_radius: 1.0 
+  initial_territory_radius: 3.0 
 
   frontier_search_radius_factor: 3.0 # Multiplies terminal radius
-  frontier_search_radius_fixed: 1.5  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
-  max_voxels_for_Rip: 200             # Max voxels in a new frontier patch (was 30-50)
+  frontier_search_radius_fixed: 8  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
+  max_voxels_for_Rip: 4000             # Max voxels in a new frontier patch (was 30-50)
   max_flow_single_terminal: 0.001   # mm^3/s (Max flow before forcing branch. Was 0.0005)
   # Fraction of total metabolic demand that the GBO aims to satisfy.
   target_perfusion_level: 0.8
   target_domain_perfusion_fraction: 0.8
 
   # Criteria for triggering a bifurcation attempt for a terminal
-  branching_trigger_radius_factor: 1.5 # Branch if current radius > factor * radius_at_last_branch (or initial)
+  branching_trigger_radius_factor: 5 # Branch if current radius > factor * radius_at_last_branch (or initial)
   branching_trigger_territory_voxels: 500 # Branch if territory size (num voxels) exceeds this
   branch_radius_increase_threshold: 1.1
   min_iterations_before_no_growth_stop: 5
@@ -101,15 +101,15 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   
   seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
     - id: "seed_A"
-      position: [40, 60, 67] # e.g., [10.0, 25.5, -30.1] in mm
+      position: [0.1, 45.4, 65.6] # e.g., [10.0, 25.5, -30.1] in mm
       initial_radius: 0.5 # mm
     - id: "seed_B"
-      position: [-4, 60, 60]
+      position: [41.6, 13.9, 12.9]
       initial_radius: 0.3 # mm
 
 perfusion_solver:
   inlet:pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
-  terminall_outlet_pressure: 2000 # Pa (approx 15 mmHg)
+  terminal_outlet_pressure: 2000 # Pa (approx 15 mmHg)
 
 tumor_angiogenesis:
   enabled: false # Set to true to run tumor angiogenesis after healthy growth
@@ -134,7 +134,7 @@ perfusion_solver:
   # For 1D network flow solver
   inlet_pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
   # Outlet condition: either fixed pressure at venous terminals or resistance model
-  outlet_pressure_venous: 2000 # Pa (approx 15 mmHg)
+  outlet_pressure_venous: 1000 # Pa (approx 15 mmHg)
   # Or, outlet_resistance_venous: value
 
   # For 3D tissue perfusion (Darcy model)

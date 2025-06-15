@@ -143,3 +143,7 @@ def test_solve_disconnected_component_no_bc(basic_config_flow_test, caplog): # A
     
     assert np.isnan(solved_graph.edges[('R0','T0')]['flow_solver'])
     assert np.isnan(solved_graph.edges[('F1','F2')]['flow_solver'])
+
+    def test_solve_two_disconnected_y_junctions(basic_config_flow_test, caplog):
+    
+    

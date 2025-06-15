@@ -386,7 +386,8 @@ def main():
         tissue_data=tissue_data,
         vascular_graph=final_vascular_tree,
         perfusion_map=perfusion_map,
-        pressure_map_tissue=pressure_map_tissue
+        pressure_map_tissue=pressure_map_tissue,
+        plot_context_masks=False 
     )
 
     end_time = time.time()

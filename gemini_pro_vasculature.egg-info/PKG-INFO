@@ -5,14 +5,17 @@ Summary: Simulation framework for vascular growth and tumour angiogenesis.
 Author: Christian Behler
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
-Requires-Dist: pyyaml
-Requires-Dist: nibabel
-Requires-Dist: numpy
-Requires-Dist: pyvista>=0.38
-Requires-Dist: networkx
+Requires-Dist: matplotlib==3.10.3
+Requires-Dist: networkx==3.4.2
+Requires-Dist: nibabel==5.3.2
+Requires-Dist: numpy==2.3.0
+Requires-Dist: pandas==2.3.0
+Requires-Dist: pyvista==0.45.2
+Requires-Dist: PyYAML==6.0.2
+Requires-Dist: scikit-learn==1.7.0
+Requires-Dist: scipy==1.15.3
 Provides-Extra: dev
-Requires-Dist: pytest; extra == "dev"
-Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: pytest==8.3.5; extra == "dev"
 
 # GEMINI_PRO_VASCULATURE
 
