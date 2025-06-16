@@ -4,6 +4,7 @@ import random
 import logging
 import os
 import shutil
+from typing import Tuple 
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +125,15 @@ def create_output_directory(base_dir: str, sim_name: str = "gbo_sim", timestamp:
     os.makedirs(full_path, exist_ok=True)
     logger.info(f"Created output directory: {full_path}")
     return full_path
+
+def is_voxel_in_bounds(voxel_coord: np.ndarray, shape: Tuple[int, ...]) -> bool:
+    """Checks if a voxel coordinate is within the bounds of a given shape."""
+    voxel_coord = np.asarray(voxel_coord) # Ensure it's a numpy array
+    if voxel_coord.ndim == 0 or voxel_coord.shape[0] != len(shape): # Check for scalar or mismatched dimensions
+        return False
+    return all(0 <= voxel_coord[d] < shape[d] for d in range(len(shape)))
+
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

@@ -4,34 +4,33 @@ import logging
 import os
 import time
 import numpy as np
-
+import networkx as nx # For type hinting
+from typing import Optional
 from src import config_manager, io_utils, utils
-from src import data_structures # For type hinting and initial object creation
+from src import data_structures
 from src import vascular_growth, angiogenesis, perfusion_solver, visualization
-from src.constants import DEFAULT_VOXEL_SIZE_MM
-
+from src.constants import DEFAULT_VOXEL_SIZE_MM, Q_MET_TUMOR_RIM_PER_ML # Added Q_MET_TUMOR_RIM_PER_ML
 
 def setup_logging(log_level_str: str, log_file: str):
     """Configures logging for the simulation."""
-    numeric_level = getattr(logging, log_level_str.upper(), None)
-    if not isinstance(numeric_level, int):
-        raise ValueError(f"Invalid log level: {log_level_str}")
+    numeric_level = getattr(logging, log_level_str.upper(), logging.INFO)
+    if not isinstance(numeric_level, int): # Fallback if level is invalid
+        print(f"Warning: Invalid log level '{log_level_str}'. Defaulting to INFO.")
+        numeric_level = logging.INFO
 
-    # Make sure log directory exists
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     
     logging.basicConfig(
         level=numeric_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_file, mode='w'), # Overwrite log file each run
-            logging.StreamHandler() # Also print to console
+            logging.FileHandler(log_file, mode='w'),
+            logging.StreamHandler()
         ]
     )
-    # Suppress overly verbose PyVista/VTK logs if not in DEBUG
     if numeric_level > logging.DEBUG:
         logging.getLogger('pyvista').setLevel(logging.WARNING)
-        # May need to find other noisy vtk loggers if they appear
+        logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
 def parse_arguments():
     """Parses command-line arguments."""
@@ -50,125 +49,114 @@ def parse_arguments():
     )
     return parser.parse_args()
 
-def load_initial_data(config: dict) -> tuple[dict, data_structures.nx.DiGraph | None]:
+def load_initial_data(config: dict) -> tuple[dict, Optional[nx.DiGraph]]:
     """
     Loads all necessary input data based on the configuration.
-    - Tissue segmentations (WM, GM, Tumor, CSF)
-    - Initial arterial centerlines
-    
-    Returns:
-        tuple: (tissue_data_dict, initial_arterial_graph)
-               tissue_data_dict contains segmentation arrays, affine, voxel_volume, etc.
-               initial_arterial_graph is a NetworkX graph of the input arteries.
     """
-    logger = logging.getLogger(__name__)
+    logger = logging.getLogger(__name__) # Get logger for this function
     logger.info("Loading initial data...")
     
-    # Initialize tissue_data dictionary
     tissue_data = {
-        'WM': None, 'GM': None, 'CSF': None, 'Tumor': None,
-        'affine': None, 'voxel_volume': None, 
+        'WM': None, 'GM': None, 'CSF': None, 
+        'Tumor_Max_Extent': None, 'Tumor': None, # Active tumor
+        'tumor_rim_mask': None, 'tumor_core_mask': None,
+        'VEGF_field': None, 'affine': None, 'voxel_volume': None, 
         'domain_mask': None, 'metabolic_demand_map': None,
         'world_coords_flat': None, 'voxel_indices_flat': None,
         'shape': None
     }
 
-    # Load segmentations
-    paths = config_manager.get_param(config, "paths")
-    wm_data, affine_wm, _ = io_utils.load_nifti_image(paths["wm_nifti"])
-    gm_data, affine_gm, _ = io_utils.load_nifti_image(paths["gm_nifti"])
+    paths = config_manager.get_param(config, "paths", {}) # Default to empty dict
+    wm_data, affine_wm, _ = io_utils.load_nifti_image(paths.get("wm_nifti",""))
+    gm_data, affine_gm, _ = io_utils.load_nifti_image(paths.get("gm_nifti",""))
     
-    # Use the first available affine and assume all are co-registered
-    # A more robust approach would check for co-registration or resample.
-    if affine_wm is not None:
-        tissue_data['affine'] = affine_wm
-    elif affine_gm is not None:
-        tissue_data['affine'] = affine_gm
-    else:
-        logger.warning("No WM or GM NIfTI found to determine affine. Using default identity affine and 1mm voxel size.")
-        tissue_data['affine'] = np.eye(4)
-        tissue_data['affine'][0,0] = tissue_data['affine'][1,1] = tissue_data['affine'][2,2] = DEFAULT_VOXEL_SIZE_MM
-        # This case might require specifying image dimensions if no NIFTIs are loaded.
-
-    tissue_data['voxel_volume'] = utils.get_voxel_volume_from_affine(tissue_data['affine'])
+    if affine_wm is not None: tissue_data['affine'] = affine_wm
+    elif affine_gm is not None: tissue_data['affine'] = affine_gm
     
-    # Determine a common shape (assuming co-registration)
     common_shape = None
     if wm_data is not None:
         common_shape = wm_data.shape
-        tissue_data['WM'] = wm_data.astype(bool) # Ensure binary
+        tissue_data['WM'] = wm_data.astype(bool)
     if gm_data is not None:
-        if common_shape is not None and gm_data.shape != common_shape:
-            logger.error("GM segmentation shape mismatch with WM. Co-registration issue?")
-            # Handle error or attempt resampling
-        elif common_shape is None:
-            common_shape = gm_data.shape
-        tissue_data['GM'] = gm_data.astype(bool) # Ensure binary
+        if common_shape and gm_data.shape != common_shape:
+            logger.error(f"GM shape {gm_data.shape} mismatch WM {common_shape}. Check inputs.")
+        elif not common_shape: common_shape = gm_data.shape
+        tissue_data['GM'] = gm_data.astype(bool)
 
-    if common_shape is None:
-        logger.error("Could not determine tissue domain shape. At least WM or GM NIfTI must be provided.")
-        # Or, allow specifying shape in config if no NIFTIs are used (e.g. for synthetic phantoms)
-        # For now, let's assume this is a fatal error for real data processing.
-        raise ValueError("Cannot determine tissue domain shape from inputs.")
+    # Try to get shape from Tumor_Max_Extent if GM/WM are missing
+    if common_shape is None and paths.get("tumor_nifti"):
+        logger.info("Attempting to derive shape and affine from tumor_nifti as GM/WM are missing/invalid.")
+        tumor_final_data_for_shape, affine_tumor_for_shape, _ = io_utils.load_nifti_image(paths["tumor_nifti"])
+        if tumor_final_data_for_shape is not None:
+            common_shape = tumor_final_data_for_shape.shape
+            if tissue_data['affine'] is None and affine_tumor_for_shape is not None:
+                tissue_data['affine'] = affine_tumor_for_shape
+            logger.info(f"Derived common_shape {common_shape} from tumor_nifti.")
+        else:
+            logger.error("Could not load tumor_nifti to derive shape. GM/WM also missing/invalid.")
+    
+    if tissue_data['affine'] is None: # Absolute fallback if no NIfTI provided affine
+        logger.warning("No NIfTI found to determine affine. Using default identity affine and 1mm voxel size.")
+        tissue_data['affine'] = np.eye(4)
+        for i in range(3): tissue_data['affine'][i,i] = DEFAULT_VOXEL_SIZE_MM
+        if common_shape is None: # If shape is still None, this is a problem
+             raise ValueError("Cannot determine tissue domain shape. No valid NIfTI inputs and no default shape specified.")
+
+    tissue_data['voxel_volume'] = utils.get_voxel_volume_from_affine(tissue_data['affine'])
+    if common_shape is None: # If still none after trying tumor, it's an issue
+        raise ValueError("Critical: Could not determine a common shape for tissue data.")
     tissue_data['shape'] = common_shape
 
-    # Optional segmentations
-    if "csf_nifti" in paths and paths["csf_nifti"]:
+    # Initialize all mask keys to prevent KeyErrors, ensuring they have the common_shape
+    for key_mask in ['CSF', 'Tumor_Max_Extent', 'Tumor', 'tumor_rim_mask', 'tumor_core_mask', 'VEGF_field']:
+        if key_mask not in tissue_data or tissue_data[key_mask] is None: # Check if None also
+            if key_mask == 'VEGF_field':
+                tissue_data[key_mask] = np.zeros(common_shape, dtype=float)
+            else:
+                tissue_data[key_mask] = np.zeros(common_shape, dtype=bool)
+
+    if paths.get("csf_nifti"):
         csf_data, _, _ = io_utils.load_nifti_image(paths["csf_nifti"])
-        if csf_data is not None and csf_data.shape == common_shape:
-            tissue_data['CSF'] = csf_data.astype(bool)
-        elif csf_data is not None:
-            logger.warning(f"CSF segmentation shape {csf_data.shape} mismatch with domain {common_shape}. Skipping CSF.")
+        if csf_data is not None and csf_data.shape == common_shape: tissue_data['CSF'] = csf_data.astype(bool)
+        elif csf_data is not None: logger.warning(f"CSF shape {csf_data.shape} mismatch domain {common_shape}. Skipping.")
 
-    if "tumor_nifti" in paths and paths["tumor_nifti"]:
-        tumor_data, _, _ = io_utils.load_nifti_image(paths["tumor_nifti"])
-        if tumor_data is not None and tumor_data.shape == common_shape:
-            tissue_data['Tumor'] = tumor_data.astype(bool)
-        elif tumor_data is not None:
-            logger.warning(f"Tumor segmentation shape {tumor_data.shape} mismatch with domain {common_shape}. Skipping Tumor.")
+    if paths.get("tumor_nifti"): # This is the FINAL tumor extent
+        tumor_data_final, _, _ = io_utils.load_nifti_image(paths["tumor_nifti"]) # Affine already set or taken from this if needed
+        if tumor_data_final is not None and tumor_data_final.shape == common_shape:
+            tissue_data['Tumor_Max_Extent'] = tumor_data_final.astype(bool)
+            logger.info(f"Loaded Tumor_Max_Extent segmentation: {np.sum(tissue_data['Tumor_Max_Extent'])} voxels.")
+        elif tumor_data_final is not None:
+            logger.warning(f"Tumor_Max_Extent shape {tumor_data_final.shape} mismatch domain {common_shape}. Using empty.")
 
-    # Create domain mask (voxels considered for simulation)
-    # For now, union of WM and GM. Could be extended to include tumor or other ROIs.
-    domain_mask = np.zeros(common_shape, dtype=bool)
-    if tissue_data['WM'] is not None:
-        domain_mask = np.logical_or(domain_mask, tissue_data['WM'])
-    if tissue_data['GM'] is not None:
-        domain_mask = np.logical_or(domain_mask, tissue_data['GM'])
-    if tissue_data['Tumor'] is not None and config_manager.get_param(config, "tumor_angiogenesis.enabled", False):
-        domain_mask = np.logical_or(domain_mask, tissue_data['Tumor'])
-    
-    tissue_data['domain_mask'] = domain_mask
-    logger.info(f"Domain mask created with {np.sum(domain_mask)} active voxels.")
+    # Domain mask for *healthy* GBO growth.
+    # Tumor growth will occur *within* Tumor_Max_Extent, potentially converting these healthy regions.
+    domain_mask_healthy = np.zeros(common_shape, dtype=bool)
+    if tissue_data['WM'] is not None: domain_mask_healthy = np.logical_or(domain_mask_healthy, tissue_data['WM'])
+    if tissue_data['GM'] is not None: domain_mask_healthy = np.logical_or(domain_mask_healthy, tissue_data['GM'])
+    # Ensure healthy domain does not initially include the pre-defined final tumor area if you want tumor to "invade" it.
+    # Or, if healthy GBO should also vascularize the future tumor area, include it.
+    # For Option 1 (tumor grows into pre-existing healthy tissue), domain_mask_healthy can overlap Tumor_Max_Extent.
+    tissue_data['domain_mask'] = domain_mask_healthy
+    logger.info(f"Initial healthy GBO domain_mask: {np.sum(domain_mask_healthy)} voxels.")
 
-    # Precompute world coordinates for active voxels
-    voxel_indices = np.array(np.where(domain_mask)).T
+    voxel_indices = np.array(np.where(tissue_data['domain_mask'])).T
     if voxel_indices.size > 0:
         tissue_data['voxel_indices_flat'] = voxel_indices
         tissue_data['world_coords_flat'] = utils.voxel_to_world(voxel_indices, tissue_data['affine'])
-    else: # Handle case of empty domain_mask gracefully, though it's unlikely for valid inputs
+    else:
         tissue_data['voxel_indices_flat'] = np.empty((0,3), dtype=int)
         tissue_data['world_coords_flat'] = np.empty((0,3), dtype=float)
-        logger.warning("Domain mask is empty. No voxels will be processed.")
+        logger.warning("Initial healthy domain_mask is empty. Healthy GBO might not run effectively.")
 
-    # Create metabolic demand map (q_met * dV per voxel)
-    segmentations_for_demand = {
-        'WM': tissue_data['WM'], 'GM': tissue_data['GM'],
-        'CSF': tissue_data['CSF'], 'Tumor': tissue_data['Tumor']
-    }
-    # Filter out None segmentations before passing
-    segmentations_for_demand = {k: v for k, v in segmentations_for_demand.items() if v is not None}
-    
+    # Initial metabolic demand map for HEALTHY tissue only.
+    segmentations_for_healthy_demand = {k: tissue_data[k] for k in ['WM', 'GM', 'CSF'] if tissue_data.get(k) is not None and np.any(tissue_data[k])}
     tissue_data['metabolic_demand_map'] = data_structures.get_metabolic_demand_map(
-        segmentations_for_demand, config, tissue_data['voxel_volume']
+        segmentations_for_healthy_demand, config, tissue_data['voxel_volume']
     )
     if tissue_data['metabolic_demand_map'] is None:
-        logger.error("Failed to generate metabolic demand map.")
-        # This could be a fatal error depending on workflow
-        # For now, allow continuation but GBO might fail or do nothing.
         tissue_data['metabolic_demand_map'] = np.zeros(common_shape, dtype=np.float32)
 
 
-    # Load initial arterial centerlines
     initial_arterial_graph = None
     centerline_path = paths.get("arterial_centerlines")
     if centerline_path:
@@ -176,261 +164,184 @@ def load_initial_data(config: dict) -> tuple[dict, data_structures.nx.DiGraph | 
         if centerline_path.endswith(".vtp"):
             poly_data = io_utils.load_arterial_centerlines_vtp(centerline_path)
         elif centerline_path.endswith(".txt"):
-            poly_data = io_utils.load_arterial_centerlines_txt(centerline_path) # Add default radius from config if needed
-        else:
-            logger.warning(f"Unsupported arterial centerline file format: {centerline_path}")
+            default_radius_centerline = config_manager.get_param(config, "vascular_properties.centerline_default_radius", 0.1)
+            poly_data = io_utils.load_arterial_centerlines_txt(centerline_path, radius_default=default_radius_centerline)
+        else: logger.warning(f"Unsupported arterial centerline file format: {centerline_path}")
 
         if poly_data and poly_data.n_points > 0:
-            # Convert PyVista PolyData to NetworkX graph
-            # This is a simplified conversion; more sophisticated handling of branches might be needed
-            # based on VTP structure (e.g., using vtkvmtk libraries for full tree parsing).
-            # For now, assumes poly_data.lines represents connected segments.
             initial_arterial_graph = data_structures.create_empty_vascular_graph()
-            node_id_counter = 0
-            pv_point_to_nx_node = {}
+            node_id_counter = 0; pv_point_to_nx_node = {}
+            default_min_radius = config_manager.get_param(config, "vascular_properties.min_radius", 0.01)
 
-            # Add points as nodes
             for pt_idx in range(poly_data.n_points):
                 pos = poly_data.points[pt_idx]
-                radius = poly_data.point_data.get('radius', [config_manager.get_param(config,"vascular_properties.min_radius",0.01)])[pt_idx] \
-                           if 'radius' in poly_data.point_data else config_manager.get_param(config,"vascular_properties.min_radius",0.01)
-                
-                # Assign a unique ID (can be more meaningful if VTP has IDs)
-                current_node_id = f"m_{node_id_counter}" # 'm' for measured
-                data_structures.add_node_to_graph(initial_arterial_graph, current_node_id,
-                                                  pos=pos, radius=radius, type='measured_root_or_segment')
+                radius_array = poly_data.point_data.get('radius')
+                radius = radius_array[pt_idx] if radius_array is not None and pt_idx < len(radius_array) else default_min_radius
+                current_node_id = f"m_{node_id_counter}"; node_id_counter += 1
+                data_structures.add_node_to_graph(initial_arterial_graph, current_node_id, pos=pos, radius=radius, type='measured_segment_point')
                 pv_point_to_nx_node[pt_idx] = current_node_id
-                node_id_counter += 1
             
-            # Add lines as edges
-            # PyVista lines array is [n_pts_cell0, pt0_idx, pt1_idx, ..., n_pts_cell1, ptA_idx, ptB_idx, ...]
-            lines_array = poly_data.lines
-            current_idx = 0
+            lines_array = poly_data.lines; current_idx = 0
             while current_idx < len(lines_array):
                 num_pts_in_segment = lines_array[current_idx]
-                # Assuming line segments (2 points) for now
                 if num_pts_in_segment == 2:
-                    pt1_original_idx = lines_array[current_idx + 1]
-                    pt2_original_idx = lines_array[current_idx + 2]
-                    
-                    node_u = pv_point_to_nx_node.get(pt1_original_idx)
-                    node_v = pv_point_to_nx_node.get(pt2_original_idx)
-
-                    if node_u and node_v:
-                        # Determine direction if possible (e.g. decreasing radius, or assume from root)
-                        # For now, add undirected or assume order in VTP implies direction
-                        # GBO often implies a rooted tree, so direction matters.
-                        # Simplistic: add edge, direction can be refined or assumed during GBO init.
-                        # Add as DiGraph: assume u->v if radius[u] >= radius[v], else v->u (very heuristic)
-                        # A better way is if VTP implies hierarchy or use flow simulation.
-                        # For now, let's add one direction and let GBO sort it out or assume root points are specified.
-                        # A robust solution would use more advanced VTP parsing or input conventions.
-                        rad_u = initial_arterial_graph.nodes[node_u]['radius']
-                        rad_v = initial_arterial_graph.nodes[node_v]['radius']
-                        if rad_u > rad_v: # Flow from larger to smaller
-                             data_structures.add_edge_to_graph(initial_arterial_graph, node_u, node_v, type='measured_segment')
-                        elif rad_v > rad_u:
-                             data_structures.add_edge_to_graph(initial_arterial_graph, node_v, node_u, type='measured_segment')
-                        else: # Equal radii, use original order
-                             data_structures.add_edge_to_graph(initial_arterial_graph, node_u, node_v, type='measured_segment')
-                    current_idx += (num_pts_in_segment + 1)
-                else: # Skip polylines with != 2 points for now or handle them
-                    logger.warning(f"Skipping polyline segment with {num_pts_in_segment} points in VTP. Expected 2.")
-                    current_idx += (num_pts_in_segment + 1)
+                    node_u_id = pv_point_to_nx_node.get(lines_array[current_idx + 1])
+                    node_v_id = pv_point_to_nx_node.get(lines_array[current_idx + 2])
+                    if node_u_id and node_v_id:
+                        rad_u = initial_arterial_graph.nodes[node_u_id]['radius']
+                        rad_v = initial_arterial_graph.nodes[node_v_id]['radius']
+                        # Prefer direction from larger to smaller radius, default u->v
+                        if rad_u < rad_v: # Swap if v is larger
+                            node_u_id, node_v_id = node_v_id, node_u_id
+                        data_structures.add_edge_to_graph(initial_arterial_graph, node_u_id, node_v_id, type='measured_segment')
+                else: logger.warning(f"Skipping polyline segment with {num_pts_in_segment} points in VTP. Expected 2.")
+                current_idx += (num_pts_in_segment + 1)
             
-            # Identify root nodes (in-degree 0) and terminal nodes (out-degree 0) of this measured graph
-            for node_id in list(initial_arterial_graph.nodes()): # list() to avoid issues if modifying graph
-                if initial_arterial_graph.in_degree(node_id) == 0 and initial_arterial_graph.out_degree(node_id) > 0 :
-                    initial_arterial_graph.nodes[node_id]['type'] = 'measured_root'
-                elif initial_arterial_graph.out_degree(node_id) == 0 and initial_arterial_graph.in_degree(node_id) > 0:
-                    initial_arterial_graph.nodes[node_id]['type'] = 'measured_terminal'
-                elif initial_arterial_graph.in_degree(node_id) > 0 and initial_arterial_graph.out_degree(node_id) > 0:
-                    initial_arterial_graph.nodes[node_id]['type'] = 'measured_bifurcation_or_segment' # Needs refinement
-            
-            logger.info(f"Converted arterial centerlines to NetworkX graph: {initial_arterial_graph.number_of_nodes()} nodes, {initial_arterial_graph.number_of_edges()} edges.")
-            if not nx.is_forest(nx.to_undirected(initial_arterial_graph)): # Check for cycles
-                 logger.warning("Initial arterial graph contains cycles. GBO expects a tree-like structure.")
-        else:
-            logger.warning("No arterial centerline data loaded or data is empty.")
-    else:
-        logger.warning("Arterial centerline file path not specified in config.")
-        # Potentially start GBO from a single seed point if no arteries given (synthetic organoid mode)
+            for node_id in list(initial_arterial_graph.nodes()): # Refine node types
+                in_deg = initial_arterial_graph.in_degree(node_id)
+                out_deg = initial_arterial_graph.out_degree(node_id)
+                if in_deg == 0 and out_deg > 0 : initial_arterial_graph.nodes[node_id]['type'] = 'measured_root'
+                elif out_deg == 0 and in_deg > 0: initial_arterial_graph.nodes[node_id]['type'] = 'measured_terminal'
+                elif in_deg > 0 and out_deg > 1 : initial_arterial_graph.nodes[node_id]['type'] = 'measured_bifurcation'
+                elif in_deg > 1 and out_deg > 0 : initial_arterial_graph.nodes[node_id]['type'] = 'measured_convergence' # Or bifurcation if undirected
+                elif in_deg == 1 and out_deg == 1: initial_arterial_graph.nodes[node_id]['type'] = 'measured_segment_point'
+                # else: isolated node or complex junction
+            logger.info(f"Loaded initial arterial graph: {initial_arterial_graph.number_of_nodes()} N, {initial_arterial_graph.number_of_edges()} E.")
+    else: logger.info("No arterial centerline file specified. GBO will start from config seeds or fallback.")
 
     return tissue_data, initial_arterial_graph
 
 
 def main():
     args = parse_arguments()
-    
-    # Load configuration
-    try:
-        config = config_manager.load_config(args.config)
-    except Exception as e:
-        print(f"CRITICAL: Failed to load configuration: {e}")
-        return
+    try: config = config_manager.load_config(args.config)
+    except Exception as e: print(f"CRITICAL: Failed to load config: {e}"); return
 
-    # Setup output directory
-    sim_name = config_manager.get_param(config, "simulation.simulation_name", "gbo_sim_run")
-    if args.output_dir: # Command line override
-        base_output_dir = args.output_dir
-    else:
-        base_output_dir = config_manager.get_param(config, "paths.output_dir", "output")
-    
+    sim_name = config_manager.get_param(config, "simulation.simulation_name", "gbo_sim")
+    base_output_dir = args.output_dir if args.output_dir else config_manager.get_param(config, "paths.output_dir", "output")
     output_dir = utils.create_output_directory(base_output_dir, sim_name, timestamp=True)
     
-    # Setup logging
     log_level = config_manager.get_param(config, "simulation.log_level", "INFO")
-    log_file_path = os.path.join(output_dir, f"{sim_name}.log")
-    setup_logging(log_level, log_file_path)
+    setup_logging(log_level, os.path.join(output_dir, f"{sim_name}.log"))
     
-    main_logger = logging.getLogger(__name__) # Get logger for main script after setup
-    main_logger.info(f"Simulation started. Output directory: {output_dir}")
-    main_logger.info(f"Using configuration file: {os.path.abspath(args.config)}")
-
-    # Save the used configuration to the output directory
+    main_logger = logging.getLogger(__name__)
+    main_logger.info(f"Simulation started. Output: {output_dir}. Config: {os.path.abspath(args.config)}")
     io_utils.save_simulation_parameters(config, os.path.join(output_dir, "config_used.yaml"))
+    
+    seed_val = config_manager.get_param(config, "simulation.random_seed", None)
+    if seed_val is not None: utils.set_rng_seed(seed_val)
 
-    # Set RNG seed
-    seed = config_manager.get_param(config, "simulation.random_seed", None)
-    if seed is not None:
-        utils.set_rng_seed(seed)
-
-    # --- Simulation Core ---
     start_time = time.time()
-
-    # 1. Load Inputs
     try:
         tissue_data, initial_arterial_graph = load_initial_data(config)
     except Exception as e:
-        main_logger.critical(f"Failed during data loading: {e}", exc_info=True)
+        main_logger.critical(f"Data loading failed: {e}", exc_info=True)
         return
     
-    # Save loaded initial data for inspection if in debug or requested
-    if config_manager.get_param(config, "visualization.save_intermediate_steps", False):
-        for key, arr in tissue_data.items():
-            if isinstance(arr, np.ndarray) and arr.ndim == 3 : # Save 3D arrays
-                 if arr.dtype == bool: arr = arr.astype(np.uint8) # nibabel compatibility
-                 io_utils.save_nifti_image(arr, tissue_data['affine'], os.path.join(output_dir, f"initial_tissue_{key}.nii.gz"))
-        if initial_arterial_graph:
-            io_utils.save_vascular_tree_vtp(initial_arterial_graph, os.path.join(output_dir, "initial_arterial_graph.vtp"))
-
-    # 2. Healthy Vascular Development (GBO)
-    main_logger.info("Starting healthy vascular development (GBO)...")
-    # The GBO module will need the initial graph (or just terminals from it) and tissue data.
-    # It will return the grown healthy vascular tree.
-    healthy_vascular_tree = vascular_growth.grow_healthy_vasculature(
-        config=config,
-        tissue_data=tissue_data,
-        initial_graph=initial_arterial_graph,
-        output_dir=output_dir # For intermediate saves
-    )
-    if healthy_vascular_tree is None:
-        main_logger.error("Healthy vascular growth failed or returned no result.")
-        # Decide whether to proceed or terminate
-    else:
-        main_logger.info(f"Healthy vascular growth finished. Tree has {healthy_vascular_tree.number_of_nodes()} nodes, {healthy_vascular_tree.number_of_edges()} segments.")
-        io_utils.save_vascular_tree_vtp(healthy_vascular_tree, os.path.join(output_dir, "healthy_vascular_tree.vtp"))
+    if config_manager.get_param(config, "visualization.save_initial_masks", False):
+        for key in ['WM', 'GM', 'CSF', 'Tumor_Max_Extent', 'domain_mask', 'metabolic_demand_map']:
+            if key in tissue_data and tissue_data[key] is not None and np.any(tissue_data[key]):
+                arr_to_save = tissue_data[key]
+                if arr_to_save.dtype == bool: arr_to_save = arr_to_save.astype(np.uint8)
+                try:
+                    io_utils.save_nifti_image(arr_to_save.astype(np.float32 if key == 'metabolic_demand_map' else np.uint8), # Ensure correct dtype
+                                              tissue_data['affine'], 
+                                              os.path.join(output_dir, f"initial_tissue_{key}.nii.gz"))
+                except Exception as e_save:
+                    main_logger.error(f"Could not save initial mask {key}: {e_save}")
 
 
-    # 3. Tumor Angiogenesis (if enabled and tumor exists)
-    final_vascular_tree = healthy_vascular_tree
-    if config_manager.get_param(config, "tumor_angiogenesis.enabled", False) and \
-       tissue_data.get('Tumor') is not None and np.any(tissue_data['Tumor']):
-        main_logger.info("Starting tumor angiogenesis...")
-        final_vascular_tree = angiogenesis.grow_tumor_vessels(
-            config=config,
-            tissue_data=tissue_data,
-            base_vascular_tree=healthy_vascular_tree, # Start from the healthy tree
-            output_dir=output_dir
+    healthy_vascular_tree = None
+    if config_manager.get_param(config, "gbo_growth.enabled", True):
+        main_logger.info("Starting healthy vascular development (GBO)...")
+        healthy_vascular_tree = vascular_growth.grow_healthy_vasculature(
+            config=config, tissue_data=tissue_data, initial_graph=initial_arterial_graph, output_dir=output_dir
         )
-        if final_vascular_tree is None:
-            main_logger.error("Tumor angiogenesis failed. Using healthy tree for subsequent steps.")
-            final_vascular_tree = healthy_vascular_tree # Fallback
+        if healthy_vascular_tree:
+            main_logger.info(f"Healthy GBO finished. Tree: {healthy_vascular_tree.number_of_nodes()} N, {healthy_vascular_tree.number_of_edges()} E.")
+            io_utils.save_vascular_tree_vtp(healthy_vascular_tree, os.path.join(output_dir, "healthy_vascular_tree.vtp"))
+        else: main_logger.error("Healthy GBO failed or returned no tree.")
+    else:
+        main_logger.info("Healthy GBO growth skipped by config.")
+        if initial_arterial_graph: # Use initial graph if GBO is skipped but centerlines were provided
+            healthy_vascular_tree = initial_arterial_graph
+            main_logger.info("Using provided initial arterial graph as base for subsequent steps.")
+
+
+    final_vascular_tree = healthy_vascular_tree if healthy_vascular_tree else data_structures.create_empty_vascular_graph()
+
+    if config_manager.get_param(config, "tumor_angiogenesis.enabled", False):
+        if tissue_data.get('Tumor_Max_Extent') is not None and np.any(tissue_data['Tumor_Max_Extent']):
+            main_logger.info("Starting tumor growth and angiogenesis simulation...")
+            # Pass a copy of the healthy tree to angiogenesis module
+            base_for_angiogenesis = healthy_vascular_tree.copy() if healthy_vascular_tree else data_structures.create_empty_vascular_graph()
+            final_vascular_tree = angiogenesis.simulate_tumor_angiogenesis_fixed_extent(
+                config=config, tissue_data=tissue_data, # tissue_data is modified in-place
+                base_vascular_tree=base_for_angiogenesis,
+                output_dir=output_dir,
+                perfusion_solver_func=perfusion_solver.solve_1d_poiseuille_flow
+            )
+            if final_vascular_tree:
+                main_logger.info(f"Tumor angiogenesis finished. Final tree: {final_vascular_tree.number_of_nodes()} N, {final_vascular_tree.number_of_edges()} E.")
+                io_utils.save_vascular_tree_vtp(final_vascular_tree, os.path.join(output_dir, "final_tumor_vascular_tree.vtp"))
+            else: # Fallback if angiogenesis returns None
+                main_logger.error("Tumor angiogenesis returned no tree. Using pre-angiogenesis tree.")
+                final_vascular_tree = base_for_angiogenesis # Or healthy_vascular_tree
+        else: main_logger.info("Tumor angiogenesis skipped (No Tumor_Max_Extent defined or empty).")
+    else: main_logger.info("Tumor angiogenesis disabled in config.")
+
+    perfusion_map_3d, pressure_map_3d_tissue = None, None # For 3D tissue grid perfusion
+    # The 1D solver updates the graph directly.
+    # A more advanced solver would produce 3D tissue perfusion maps.
+    if config_manager.get_param(config, "perfusion_solver.run_final_1d_flow_solve", True) and final_vascular_tree and final_vascular_tree.number_of_nodes() > 0:
+        main_logger.info("Running final 1D flow solve on the final vascular tree...")
+        # TODO: Robustly update Q_flow demands for ALL terminals (healthy, tumor) based on final territories
+        # This is a complex step involving re-assigning territories (e.g. Voronoi) to all terminals
+        # and summing metabolic_demand_map from tissue_data for each territory.
+        # For now, the Q_flow values set during GBO/Angiogenesis will be used if not updated here.
+        # Example of simple update (could be more sophisticated):
+        for node_id_f, data_f in final_vascular_tree.nodes(data=True):
+            if final_vascular_tree.out_degree(node_id_f) == 0 and final_vascular_tree.in_degree(node_id_f) > 0: # Is a terminal
+                # Placeholder: Re-evaluate demand based on its final type/location
+                if data_f.get('is_tumor_vessel'):
+                    data_f['Q_flow'] = config_manager.get_param(config, "tumor_angiogenesis.min_tumor_terminal_demand", DEFAULT_MIN_TUMOR_TERMINAL_DEMAND)
+                # else: (for healthy terminals, their demand might have been set by GBO)
+        
+        final_vascular_tree_with_flow = perfusion_solver.solve_1d_poiseuille_flow(
+            final_vascular_tree.copy(), config, None, None # Use Q_flow from nodes
+        )
+        if final_vascular_tree_with_flow:
+            final_vascular_tree = final_vascular_tree_with_flow
+            io_utils.save_vascular_tree_vtp(final_vascular_tree, os.path.join(output_dir, "final_vascular_tree_with_flowdata.vtp"))
+            main_logger.info("Final 1D flow solution computed and saved.")
         else:
-            main_logger.info(f"Tumor angiogenesis finished. Final tree has {final_vascular_tree.number_of_nodes()} nodes, {final_vascular_tree.number_of_edges()} segments.")
-            io_utils.save_vascular_tree_vtp(final_vascular_tree, os.path.join(output_dir, "tumor_vascular_tree.vtp"))
+            main_logger.error("Final 1D flow solution failed.")
     else:
-        main_logger.info("Tumor angiogenesis skipped (disabled or no tumor data).")
+        main_logger.info("Final 1D flow solve skipped.")
 
-
-    # 4. Perfusion Modeling
-    perfusion_map = None
-    pressure_map_tissue = None
-    if config_manager.get_param(config, "perfusion_solver.enabled", False) and final_vascular_tree:
-        main_logger.info("Starting perfusion modeling...")
-        # Perfusion solver updates tree with pressures/flows and returns tissue maps
-        final_vascular_tree, perfusion_map, pressure_map_tissue = perfusion_solver.calculate_perfusion(
-            config=config,
-            tissue_data=tissue_data,
-            vascular_graph=final_vascular_tree, # Pass the most up-to-date tree
-            output_dir=output_dir
-        )
-        if perfusion_map is not None:
-            io_utils.save_nifti_image(perfusion_map, tissue_data['affine'], os.path.join(output_dir, "perfusion_map.nii.gz"))
-            main_logger.info("Perfusion map generated and saved.")
-        if pressure_map_tissue is not None:
-            io_utils.save_nifti_image(pressure_map_tissue, tissue_data['affine'], os.path.join(output_dir, "tissue_pressure_map.nii.gz"))
-            main_logger.info("Tissue pressure map generated and saved.")
-        # The final_vascular_tree might have updated pressure/flow attributes
-        io_utils.save_vascular_tree_vtp(final_vascular_tree, os.path.join(output_dir, "final_vascular_tree_with_perfusion_data.vtp"))
-
-    else:
-        main_logger.info("Perfusion modeling skipped (disabled or no vascular tree).")
-
-
-    # 5. Visualization
     main_logger.info("Generating final visualizations...")
     visualization.generate_final_visualizations(
-        config=config,
-        output_dir=output_dir,
-        tissue_data=tissue_data,
+        config=config, output_dir=output_dir, tissue_data=tissue_data,
         vascular_graph=final_vascular_tree,
-        perfusion_map=perfusion_map,
-        pressure_map_tissue=pressure_map_tissue,
-        plot_context_masks=False 
+        perfusion_map=perfusion_map_3d, # This would be from an advanced solver
+        pressure_map_tissue=pressure_map_3d_tissue, # This also
+        plot_context_masks=config_manager.get_param(config, "visualization.plot_context_masks_final", True)
     )
 
-    end_time = time.time()
-    main_logger.info(f"Simulation finished. Total execution time: {end_time - start_time:.2f} seconds.")
-    main_logger.info(f"All outputs saved to: {output_dir}")
-
+    main_logger.info(f"Simulation finished. Total time: {time.time() - start_time:.2f}s. Output: {output_dir}")
 
 if __name__ == "__main__":
-    # Create dummy placeholder files for modules to allow main.py to import them
-    # This is for initial skeleton setup. These will be replaced by actual implementations.
-    placeholder_modules = ["vascular_growth", "angiogenesis", "perfusion_solver", "visualization"]
-    for mod_name in placeholder_modules:
-        mod_path = os.path.join("src", f"{mod_name}.py")
-        if not os.path.exists(mod_path):
-            with open(mod_path, "w") as f:
-                if mod_name == "vascular_growth":
-                    f.write("import networkx as nx\nimport logging\nlogger = logging.getLogger(__name__)\ndef grow_healthy_vasculature(config, tissue_data, initial_graph, output_dir):\n    logger.info('vascular_growth.grow_healthy_vasculature called (placeholder)')\n    if initial_graph: return initial_graph.copy()\n    return nx.DiGraph()\n")
-                elif mod_name == "angiogenesis":
-                    f.write("import networkx as nx\nimport logging\nlogger = logging.getLogger(__name__)\ndef grow_tumor_vessels(config, tissue_data, base_vascular_tree, output_dir):\n    logger.info('angiogenesis.grow_tumor_vessels called (placeholder)')\n    if base_vascular_tree: return base_vascular_tree.copy()\n    return nx.DiGraph()\n")
-                elif mod_name == "perfusion_solver":
-                    f.write("import numpy as np\nimport logging\nlogger = logging.getLogger(__name__)\ndef calculate_perfusion(config, tissue_data, vascular_graph, output_dir):\n    logger.info('perfusion_solver.calculate_perfusion called (placeholder)')\n    shape = tissue_data.get('shape', (10,10,10))\n    return vascular_graph, np.zeros(shape), np.zeros(shape)\n")
-                elif mod_name == "visualization":
-                    f.write("import logging\nlogger = logging.getLogger(__name__)\ndef generate_final_visualizations(config, output_dir, tissue_data, vascular_graph, perfusion_map, pressure_map_tissue):\n    logger.info('visualization.generate_final_visualizations called (placeholder)')\n    pass\n")
-    
-    # Create dummy __init__.py in src if it doesn't exist
-    init_py_path = os.path.join("src", "__init__.py")
-    if not os.path.exists(init_py_path):
-        with open(init_py_path, "w") as f:
-            f.write("# src package\n")
-
-    # Create a default config.yaml if it doesn't exist
+    # Basic setup for running directly, assuming config.yaml and data dir exist
     if not os.path.exists("config.yaml"):
-        config_manager.create_default_config("config.yaml")
-        print("Created default config.yaml. Please populate 'data/' directory or update paths in config.yaml.")
-    
-    # Create data and output directories if they don't exist
-    os.makedirs("data", exist_ok=True)
-    os.makedirs("output", exist_ok=True)
-    # Add READMEs to data/ and output/
-    if not os.path.exists("data/README.md"):
-        with open("data/README.md", "w") as f: f.write("Place input NIfTI (.nii.gz) and VTP/TXT centerline files here.\nUpdate config.yaml to point to these files.\n")
-    if not os.path.exists("output/README.md"):
-        with open("output/README.md", "w") as f: f.write("This directory will contain simulation results.\nEach run creates a timestamped subfolder.\n")
+        # Attempt to create a default config if config_manager supports it
+        try:
+            config_manager.create_default_config("config.yaml") # You'd need to implement this
+            print("Created default config.yaml. Please review and populate paths, especially for NIfTI files.")
+        except AttributeError:
+            print("Warning: config_manager.create_default_config not found. Please ensure config.yaml exists.")
+        except Exception as e:
+            print(f"Warning: Could not create default config.yaml: {e}")
 
-
+    os.makedirs(config_manager.get_param(config_manager.load_config("config.yaml" if os.path.exists("config.yaml") else {}), "paths.input_data_dir", "data"), exist_ok=True)
+    os.makedirs(config_manager.get_param(config_manager.load_config("config.yaml" if os.path.exists("config.yaml") else {}), "paths.output_dir", "output"), exist_ok=True)
     main()

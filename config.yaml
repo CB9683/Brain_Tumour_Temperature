@@ -5,7 +5,7 @@ paths:
   wm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_wm_mask.nii.gz"
   gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_gm_mask.nii.gz"
   csf_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_csf_mask.nii.gz" # Optional
-  tumor_nifti: "data/sample_tumor.nii.gz" # Optional, for angiogenesis simulation
+  tumor_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/tumour_mask.nii.gz" # Optional, for angiogenesis simulation
 
   # Input arterial centerlines (VTP or TXT)
   # These define roots and terminals of measured vasculature.
@@ -29,8 +29,8 @@ tissue_properties:
     gm: 0.0167    # Corresponds to ~60 ml/min/100g
     wm: 0.0056    # Corresponds to ~20 ml/min/100g
     csf: 0.0
-    tumor_rim: 0.0334 # Higher demand at tumor rim
-    tumor_core: 0.0083 # Potentially lower in necrotic core
+    tumor_rim: 0.0434 # Higher demand at tumor rim
+    tumor_core: 0.003 # Potentially lower in necrotic core
     # If only 'tumor' key exists, it's used for all tumor voxels.
     # If 'tumor_rim' and 'tumor_core' exist, they are used with corresponding segmentations.
 
@@ -56,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 12
+  max_iterations: 3
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -112,23 +112,77 @@ perfusion_solver:
   terminal_outlet_pressure: 2000 # Pa (approx 15 mmHg)
 
 tumor_angiogenesis:
-  enabled: false # Set to true to run tumor angiogenesis after healthy growth
-  # Criteria for selecting existing healthy vessels as sprouting points
-  sprouting_vessel_min_radius: 0.05 # mm (e.g., arterioles)
-  sprouting_distance_to_tumor_max: 2.0 # mm (max distance from vessel to tumor edge for sprouting)
-  
-  # Growth parameters for tumor vessels
-  num_sprouts_per_iteration: 5
-  max_tumor_vessels_total: 500 # Limit total number of new tumor vessel segments
-  growth_bias_strength_to_tumor_rim: 0.7 # Bias for random walk (0-1)
-  growth_bias_strength_to_tumor_center: 0.3 # If rim is satisfied, grow towards center
+  enabled: true  # Master switch for this entire module
 
-  # Pathological vessel characteristics
-  segment_length_mean_tumor: 0.2 # mm (shorter segments)
-  segment_length_std_tumor: 0.05 # mm
-  tortuosity_factor: 1.2 # Multiplier for path length or random angle changes
-  murray_law_deviation_factor: 0.1 # e.g., 10% deviation allowed from ideal Murray's law sums
+  num_macro_iterations: 5 # Total number of "days" or major cycles of tumor growth + angiogenesis
 
+  # --- Initial Tumor Seeding (if not starting from an already active 'Tumor' mask in tissue_data) ---
+  initial_tumor_seed:
+    # Voxel coordinates (i,j,k) for the seed center, relative to the NIfTI image grid
+    # Ensure these coordinates are within your Tumor_Max_Extent mask
+    center_voxel_ijk_relative_to_image_grid: [240, 240, 175] # Example: ~center of a 480x480x350 image
+    radius_voxels: 3             # Initial radius of the active tumor seed in voxels
+
+  # --- Tumor Growth (Mesoscale expansion within Tumor_Max_Extent) ---
+  tumor_growth:
+    steps_per_macro_iter: 1      # How many tumor expansion steps per macro iteration
+    expansion_voxels_per_step: 200 # Number of new voxels the active tumor tries to claim per step
+    # supply_radius_for_growth_mm: 0.5 # Optional: For more complex "supplied rim" logic (not fully used in current script)
+
+  # --- Tumor Morphology (Rim/Core) ---
+  tumor_morphology:
+    rim_thickness_voxels: 3      # Thickness of the metabolically active/VEGF-producing rim in voxels
+
+  # --- VEGF Field Settings ---
+  vegf_settings:
+    production_rate_rim: 1.0     # Relative VEGF production strength in the tumor rim
+    # production_rate_core: 0.1  # Optional: VEGF production in the core (can be 0 if necrotic or less active)
+    apply_diffusion_blur: true   # Whether to apply Gaussian blur to simulate diffusion
+    diffusion_blur_sigma: 2.5    # Sigma for Gaussian blur (in voxel units)
+
+  # --- Vessel Co-option ---
+  cooption:
+    # When a healthy vessel is engulfed by the active tumor
+    radius_dilation_factor_mean: 1.1 # Mean factor by which co-opted vessel radius is multiplied
+    radius_dilation_factor_std: 0.05 # Std dev for the dilation factor, adds variability
+    permeability_Lp_factor_tumor: 10.0 # Multiplicative factor for hydraulic conductivity (Lp) increase for tumor vessels
+
+  # --- Angiogenic Sprouting ---
+  sprouting:
+    min_vegf_concentration: 0.2  # Minimum VEGF normalized (0-1 if field is normalized) or absolute concentration to trigger sprouting
+    min_parent_vessel_radius_mm: 0.020 # Minimum radius of an existing vessel to be a candidate for sprouting (e.g., 20 microns)
+    max_new_sprouts_per_iteration: 5   # Max new sprouts initiated in one angiogenesis *step* (not macro iteration)
+    initial_sprout_radius_mm: 0.008    # Radius of a newly formed angiogenic sprout (e.g., 8 microns)
+    initial_sprout_length_mm: 0.04     # Initial length of the first segment of a new sprout (e.g., 5x radius)
+    # allow_sprout_from_angiogenic: false # Whether new angiogenic vessels can themselves sprout further (can lead to dense networks)
+
+  # --- Angiogenic Vessel Extension ---
+  extension:
+    step_length_mm: 0.02         # How far an angiogenic tip extends per step along VEGF gradient (e.g., 2-3x its radius)
+
+  # --- Angiogenic Branching (Simplified Stochastic) ---
+  angiogenic_branching:
+    # Probability of branching for an active tip = branch_probability_factor_vegf * (local_VEGF / max_VEGF)
+    branch_probability_factor_vegf: 0.05 # Base factor, e.g., 5% chance if VEGF is max
+    branch_angle_spread_deg: 90.0      # Max deviation (e.g., +/- 45 deg) from parent direction for new child branches
+
+  # --- Anastomosis (Tip-to-Segment) ---
+  anastomosis:
+    search_radius_factor: 3.0    # Search radius for target segment = tip_radius * this_factor
+    min_fusion_angle_deg: 100.0  # Tip's last segment vector and vector to target midpoint should form an angle >= this (to avoid fusing back on itself)
+    max_dist_to_midpoint_factor: 2.0 # Tip's distance to target segment's midpoint <= tip_radius * this_factor
+
+  # --- Flow Solver and Radius Adaptation during Angiogenesis ---
+  flow_solve_interval_macro_iters: 5 # How many macro iterations between running the full 1D flow solver
+  min_tumor_terminal_demand: 1.0e-5  # Default Q_flow (mm^3/s) for new angiogenic terminals if more detailed demand isn't calculated
+
+  adaptation: # Rules for how tumor vessel radii change after flow solve
+    tumor_radius_factor: 1.0         # Target tumor radius = MurrayRadius * this factor (1.0 = same as healthy, >1 = larger for same flow)
+    min_tumor_vessel_radius_mm: 0.006 # Tumor vessels might resist shrinking below this (e.g., 6 microns)
+
+  # --- Saving Intermediate Angiogenesis Results ---
+  save_intermediate_interval_macro_iters: 1 # How many macro iterations between saving VTPs and NIfTIs
+                                            # Set to 0 or a very large number to disable intermediate saves.
 perfusion_solver:
   enabled: false # Set to true to run perfusion modeling after vascular growth
   # For 1D network flow solver
