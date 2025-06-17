@@ -304,88 +304,111 @@ def analyze_volumetric_densities(graph: nx.DiGraph, tissue_data: dict, output_di
 def plot_vascular_tree_pyvista(
     graph: Optional[nx.DiGraph],
     title: str = "Vascular Tree",
-    background_color: str = "white",
-    cmap_radius: str = "viridis",
+    # ... (other existing parameters: background_color, cmap_radius, etc.)
     output_screenshot_path: Optional[str] = None,
-    tissue_masks: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = None, # Modified for testing
-    seed_points_world: Optional[List[Tuple[np.ndarray, float, str]]] = None,
-    color_by_scalar: Optional[str] = 'radius',
+    tissue_masks: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = None,
+    gbo_seed_points_world: Optional[List[Tuple[np.ndarray, float, str]]] = None, # Renamed for clarity
+    initial_tumor_seed_info: Optional[Dict] = None, # New: {'center_world': np.array, 'radius_world': float}
+    # ... (other existing parameters: domain_outline_color, etc.)
+    color_by_scalar: Optional[str] = 'radius', 
     scalar_bar_title_override: Optional[str] = None,
-    custom_cmap: Optional[str] = None
+    custom_cmap: Optional[str] = None,
+    config_for_viz_params: Optional[dict] = None # Pass config for viz specific params
     ):
     if not PYVISTA_AVAILABLE: logger.warning("PyVista not available. Skipping 3D PyVista plot."); return
 
+    # Fetch viz params from config if provided, else use hardcoded defaults
+    cfg = config_for_viz_params if config_for_viz_params else {}
+    bg_color = config_manager.get_param(cfg, "visualization.pyvista_background_color", "white")
+    default_cmap_radius = config_manager.get_param(cfg, "visualization.pyvista_cmap_radius", "viridis")
+    seed_color = config_manager.get_param(cfg, "visualization.seed_point_color", "red")
+    seed_radius_scale = config_manager.get_param(cfg, "visualization.seed_marker_radius_scale", 5.0)
+    tumor_seed_color = config_manager.get_param(cfg, "visualization.tumor_seed_marker_color", "magenta")
+
+
     plotter = pv.Plotter(off_screen=output_screenshot_path is not None, window_size=[1200,900])
-    plotter.background_color = background_color
+    plotter.background_color = bg_color
     plotter.add_title(title, font_size=16)
 
-    spacing_for_seeds = np.array([1.0, 1.0, 1.0])
+    spacing_for_markers = np.array([1.0, 1.0, 1.0]) # Default
 
-    if tissue_masks: # tissue_masks will be None or an empty dict for this test
-        mask_colors_default = {"GM": "lightblue", "WM": "lightyellow", "domain_mask": "lightgray", "Tumor": "lightcoral"}
-        mask_opacities_default = {"GM": 0.2, "WM": 0.2, "domain_mask": 0.1, "Tumor": 0.3}
-        # These config gets will use defaults if config is None
-        domain_outline_color = config_manager.get_param(None, "visualization.domain_mask_color", "lightgray")
-        domain_outline_opacity = config_manager.get_param(None, "visualization.domain_mask_opacity", 0.1)
+    if tissue_masks:
+        mask_colors_default = {
+            "GM": "lightblue", "WM": "lightyellow", 
+            "domain_mask": config_manager.get_param(cfg, "visualization.domain_mask_color", "lightgray"),
+            "CSF": "lightcyan",
+            "Tumor_Max_Extent": config_manager.get_param(cfg, "visualization.tumor_max_extent_mask_color", "salmon"),
+            "Tumor": config_manager.get_param(cfg, "visualization.active_tumor_mask_color", "darkred") # For active tumor
+        }
+        mask_opacities_default = {
+            "GM": 0.2, "WM": 0.2, 
+            "domain_mask": config_manager.get_param(cfg, "visualization.domain_mask_opacity", 0.1),
+            "CSF": 0.1,
+            "Tumor_Max_Extent": 0.15,
+            "Tumor": 0.3 # Active tumor slightly more opaque
+        }
 
         for mask_name, mask_data_tuple in tissue_masks.items():
             if not isinstance(mask_data_tuple, tuple) or len(mask_data_tuple) != 2: continue
             mask_data, affine = mask_data_tuple
             if mask_data is None or not np.any(mask_data) or affine is None: continue
 
-            logger.info(f"Processing mask '{mask_name}' for PyVista: Shape={mask_data.shape}, Sum={np.sum(mask_data)}")
-            logger.debug(f"Mask '{mask_name}' Affine:\n{affine}")
+            logger.info(f"Plotting context mask '{mask_name}': Shape={mask_data.shape}, Sum={np.sum(mask_data)}")
             try:
                 dims = np.array(mask_data.shape)
                 current_spacing = np.abs(np.diag(affine)[:3])
                 origin = affine[:3, 3]
-                logger.debug(f"Mask '{mask_name}': Dims={dims}, Spacing={current_spacing}, Origin={origin}")
-                if mask_name == "domain_mask": spacing_for_seeds = current_spacing
+                if np.all(current_spacing > constants.EPSILON): # Update if valid spacing
+                    spacing_for_markers = current_spacing
 
                 grid = pv.ImageData(dimensions=dims, spacing=current_spacing, origin=origin)
                 grid.point_data[mask_name] = mask_data.flatten(order="F").astype(float)
                 contour = grid.contour([0.5], scalars=mask_name, rng=[0,1])
 
                 if contour.n_points > 0:
-                    logger.info(f"Mask '{mask_name}' contour generated: {contour.n_points} points. Bounds: {contour.bounds}")
-                    if mask_name == "domain_mask" and output_screenshot_path:
-                        debug_contour_path = os.path.join(os.path.dirname(output_screenshot_path), f"debug_{mask_name}_contour.vtk")
-                        try: contour.save(debug_contour_path); logger.info(f"Saved debug contour for '{mask_name}' to {debug_contour_path}")
-                        except Exception as e_save_contour: logger.error(f"Could not save debug contour for '{mask_name}': {e_save_contour}")
+                    color = mask_colors_default.get(mask_name, "grey")
+                    opacity = mask_opacities_default.get(mask_name, 0.1)
+                    plotter.add_mesh(contour, color=color, opacity=opacity, style='surface')
+                    logger.debug(f"Mask '{mask_name}' contour bounds: {contour.bounds}")
+                    if mask_name == "domain_mask" and output_screenshot_path: # For initial setup plot mainly
+                        debug_contour_path = os.path.join(os.path.dirname(output_screenshot_path), f"debug_plot_{mask_name}_contour.vtk")
+                        try: contour.save(debug_contour_path)
+                        except Exception as e_save: logger.error(f"Could not save debug contour {mask_name}: {e_save}")
 
-                    current_color = mask_colors_default.get(mask_name, "grey")
-                    current_opacity = mask_opacities_default.get(mask_name, 0.1)
-                    if mask_name == "domain_mask":
-                        current_color = domain_outline_color
-                        current_opacity = domain_outline_opacity
-                    plotter.add_mesh(contour, color=current_color, opacity=current_opacity, style='surface')
                 else: logger.warning(f"No contour generated for mask '{mask_name}'.")
             except Exception as e_mask: logger.error(f"Error plotting mask '{mask_name}': {e_mask}", exc_info=True)
     else:
-        logger.info("No tissue masks provided to plot_vascular_tree_pyvista. Skipping mask rendering.")
+        logger.info("No tissue masks provided for this plot.")
+
+    # Plot GBO Seed points (if any)
+    if gbo_seed_points_world:
+        for seed_pos, seed_initial_radius, seed_name in gbo_seed_points_world:
+            marker_base_size = np.mean(spacing_for_markers) * 0.5
+            visual_marker_radius = max(marker_base_size * seed_radius_scale, seed_initial_radius * 2.0, 0.05 * np.mean(spacing_for_markers))
+            plotter.add_mesh(pv.Sphere(center=seed_pos, radius=visual_marker_radius), color=seed_color, opacity=0.9)
+            plotter.add_point_labels(seed_pos + np.array([0,0,visual_marker_radius*2]), [seed_name], font_size=10, text_color=seed_color)
 
 
-    if seed_points_world:
-        seed_point_color = config_manager.get_param(None, "visualization.seed_point_color", "red")
-        seed_point_radius_scale = config_manager.get_param(None, "visualization.seed_marker_radius_scale", 5.0)
-        for seed_pos, seed_initial_radius, seed_name in seed_points_world:
-            try:
-                marker_base_size = np.mean(spacing_for_seeds) * 0.5
-                visual_marker_radius = max(marker_base_size * seed_point_radius_scale,
-                                           seed_initial_radius * 2.0,
-                                           0.05 * np.mean(spacing_for_seeds if np.any(spacing_for_seeds > 0) else np.array([1.0])))
-                logger.debug(f"Plotting seed '{seed_name}' at {seed_pos} with display radius {visual_marker_radius:.3f}")
-                sphere = pv.Sphere(center=seed_pos, radius=visual_marker_radius)
-                plotter.add_mesh(sphere, color=seed_point_color, opacity=0.8)
-            except Exception as e_seed: logger.error(f"Error plotting seed '{seed_name}': {e_seed}", exc_info=True)
+    # Plot Initial Tumor Seed Sphere (New)
+    if initial_tumor_seed_info:
+        center_w = initial_tumor_seed_info.get('center_world')
+        radius_w = initial_tumor_seed_info.get('radius_world')
+        if center_w is not None and radius_w is not None and radius_w > 0:
+            logger.info(f"Plotting initial tumor seed sphere at {np.round(center_w,2)} with radius {radius_w:.3f}")
+            plotter.add_mesh(pv.Sphere(center=center_w, radius=radius_w), color=tumor_seed_color, opacity=0.5)
+            plotter.add_point_labels(center_w + np.array([0,0,radius_w*1.5]), ["Initial Tumor Seed"], font_size=10, text_color=tumor_seed_color)
 
+
+    # Plot Vascular Graph (if any)
+    # ... (The existing graph plotting logic from the previous "complete" visualization.py version) ...
+    # ... This includes creating tree_mesh, handling point/cell data for scalars ...
+    # ... Make sure to use `default_cmap_radius` from fetched config ...
     tree_mesh_bounds_logged = False
     if graph is not None and graph.number_of_nodes() > 0:
         points, lines, node_to_idx, idx_counter = [], [], {}, 0
         point_data_arrays: Dict[str, List[float]] = {'radius': [], 'pressure': []}
         edge_data_arrays: Dict[str, List[float]] = {'flow_solver': []}
-
-        min_voxel_dim = np.min(spacing_for_seeds) if np.any(spacing_for_seeds > 0) else 0.01
+        min_voxel_dim = np.min(spacing_for_markers) if np.any(spacing_for_markers > 0) else 0.01
         min_plot_radius = max(constants.MIN_VESSEL_RADIUS_MM * 0.1, min_voxel_dim * 0.05, 1e-4)
 
         for node_id, data in graph.nodes(data=True):
@@ -393,9 +416,7 @@ def plot_vascular_tree_pyvista(
                 points.append(data['pos'])
                 point_data_arrays['radius'].append(max(data.get('radius', min_plot_radius), min_plot_radius) if np.isfinite(data.get('radius', min_plot_radius)) else min_plot_radius)
                 point_data_arrays['pressure'].append(data.get('pressure', np.nan))
-                node_to_idx[node_id] = idx_counter
-                idx_counter += 1
-
+                node_to_idx[node_id] = idx_counter; idx_counter += 1
         if not points: logger.warning("No valid nodes with positions in graph for tree plotting.")
         else:
             points_np = np.array(points)
@@ -403,76 +424,153 @@ def plot_vascular_tree_pyvista(
                 if u in node_to_idx and v in node_to_idx:
                     lines.extend([2, node_to_idx[u], node_to_idx[v]])
                     edge_data_arrays['flow_solver'].append(data.get('flow_solver', np.nan))
-
             tree_mesh = pv.PolyData()
             if points_np.shape[0] > 0:
                 tree_mesh.points = points_np
                 for key, arr in point_data_arrays.items():
-                    if arr: tree_mesh.point_data[key] = np.array(arr)
-                logger.info(f"Vascular tree mesh generated: {tree_mesh.n_points} points. Bounds: {tree_mesh.bounds}")
+                    if arr and len(arr) == tree_mesh.n_points: tree_mesh.point_data[key] = np.array(arr)
+                logger.info(f"Vascular tree mesh for plot: {tree_mesh.n_points} points. Bounds: {tree_mesh.bounds}")
                 tree_mesh_bounds_logged = True
-
-                if lines and tree_mesh.n_points > 0:
+                if lines:
                     tree_mesh.lines = np.array(lines)
                     if tree_mesh.n_cells > 0:
                         for key, arr in edge_data_arrays.items():
                              if arr and len(arr) == tree_mesh.n_cells: tree_mesh.cell_data[key] = np.array(arr)
-                             elif arr: logger.warning(f"Mismatch in edge data '{key}' length ({len(arr)}) and n_cells ({tree_mesh.n_cells}). Skipping.")
-
                         active_scalars_on_points = color_by_scalar in tree_mesh.point_data and np.any(np.isfinite(tree_mesh.point_data[color_by_scalar]))
                         active_scalars_on_cells = color_by_scalar in tree_mesh.cell_data and np.any(np.isfinite(tree_mesh.cell_data[color_by_scalar]))
-
-
-                        sargs = {'title': scalar_bar_title_override if scalar_bar_title_override else color_by_scalar.replace("_"," ").title(),
-                                 'color':'black', 'vertical':True, 'position_y': 0.05, 'position_x': 0.85, 'height': 0.3, 'n_labels': 5}
-
-                        current_cmap = custom_cmap if custom_cmap else (cmap_radius if color_by_scalar == 'radius' else 'coolwarm')
-                        
+                        sargs = {'title': scalar_bar_title_override if scalar_bar_title_override else color_by_scalar.replace("_"," ").title(), 'color':'black', 'vertical':True, 'position_y': 0.05, 'position_x': 0.85, 'height': 0.3, 'n_labels': 5}
+                        current_cmap_actual = custom_cmap if custom_cmap else (default_cmap_radius if color_by_scalar == 'radius' else 'coolwarm')
                         preference = 'point' if active_scalars_on_points else ('cell' if active_scalars_on_cells else None)
-
                         if preference:
-                            logger.info(f"Plotting tree colored by '{color_by_scalar}' using cmap '{current_cmap}'. Scalar preference: '{preference}'.")
-                            plotter.add_mesh(tree_mesh, scalars=color_by_scalar, line_width=5, cmap=current_cmap,
-                                             render_lines_as_tubes=True, scalar_bar_args=sargs,
-                                             preference=preference)
+                            plotter.add_mesh(tree_mesh, scalars=color_by_scalar, line_width=3, cmap=current_cmap_actual, render_lines_as_tubes=True, scalar_bar_args=sargs, preference=preference)
                         else:
-                            logger.warning(f"Scalar '{color_by_scalar}' not found or contains no finite values in point or cell data. Plotting with default radius coloring.")
                             if 'radius' in tree_mesh.point_data and np.any(np.isfinite(tree_mesh.point_data['radius'])):
-                                plotter.add_mesh(tree_mesh, scalars='radius', line_width=5, cmap=cmap_radius,
-                                                 render_lines_as_tubes=True, scalar_bar_args={'title': 'Radius (mm)', **sargs})
-                            else: # Absolute fallback: no color, just structure
-                                logger.warning("No valid 'radius' data either. Plotting tree structure with default color.")
-                                plotter.add_mesh(tree_mesh, color="gray", line_width=3, render_lines_as_tubes=True)
-
-                    elif tree_mesh.n_points > 0: # Points exist, but no lines were formed
-                         logger.info("Graph has points but no line cells. Plotting as scaled spheres.")
-                         if 'radius' in tree_mesh.point_data and np.any(np.isfinite(tree_mesh.point_data['radius'])):
-                            tree_mesh.active_scalars_name = 'radius'
-                            try:
-                                glyph_factor = 0.1
-                                spheres = tree_mesh.glyph(orient=False, scale='radius', factor=glyph_factor)
-                                plotter.add_mesh(spheres, scalars='radius', cmap=cmap_radius,
-                                                 scalar_bar_args={'title': 'Node Radius (mm)', 'color':'black', 'vertical':True, 'position_y': 0.05, 'position_x': 0.85, 'height': 0.3, 'n_labels': 5})
-                            except Exception as e_glyph:
-                                logger.error(f"Glyphing points failed: {e_glyph}. Plotting simple points.", exc_info=True)
-                                plotter.add_points(points_np, render_points_as_spheres=True, point_size=5, color='purple')
-                         else: plotter.add_points(points_np, render_points_as_spheres=True, point_size=5, color='purple')
-
-            else: logger.warning("No points to create tree_mesh from for PyVista.")
-    if not tree_mesh_bounds_logged:
-         logger.info("No vascular graph provided or graph was empty. Only plotting context (masks/seeds).")
-
+                                plotter.add_mesh(tree_mesh, scalars='radius', line_width=3, cmap=default_cmap_radius, render_lines_as_tubes=True, scalar_bar_args={'title': 'Radius (mm)', **sargs})
+                            else: plotter.add_mesh(tree_mesh, color="darkgrey", line_width=2, render_lines_as_tubes=True)
+                    # ... (Glyphing for points only if no lines was here, can be added back if needed) ...
+    if not tree_mesh_bounds_logged: logger.info("No vascular graph provided or it was empty.")
 
     plotter.camera_position = 'iso'
     plotter.enable_parallel_projection()
     plotter.add_axes(interactive=True)
+    if output_screenshot_path: plotter.show(auto_close=True, screenshot=output_screenshot_path)
+    else: plotter.show()
 
-    if output_screenshot_path:
-        plotter.show(auto_close=True, screenshot=output_screenshot_path)
-        logger.info(f"Saved PyVista plot to {output_screenshot_path}")
+
+# Modify generate_final_visualizations or add a new function for initial setup plot
+def visualize_initial_setup(
+    config: dict, output_dir: str, tissue_data: dict, 
+    initial_arterial_graph: Optional[nx.DiGraph]
+    ):
+    logger.info("Generating visualization of initial simulation setup...")
+    
+    masks_to_plot: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+    mask_keys_to_plot = ['domain_mask', 'GM', 'WM', 'CSF', 'Tumor_Max_Extent']
+    for key in mask_keys_to_plot:
+        if tissue_data.get(key) is not None and np.any(tissue_data[key]) and tissue_data.get('affine') is not None:
+            masks_to_plot[key] = (tissue_data[key], tissue_data['affine'])
+            logger.info(f"Added '{key}' to initial setup plot.")
+
+    gbo_seeds_viz_data: List[Tuple[np.ndarray, float, str]] = []
+    if not initial_arterial_graph or initial_arterial_graph.number_of_nodes() == 0: # Only plot config seeds if no VTP graph
+        config_gbo_seeds = config_manager.get_param(config, "gbo_growth.seed_points", [])
+        if config_gbo_seeds and isinstance(config_gbo_seeds, list):
+            for i, seed_info in enumerate(config_gbo_seeds):
+                if isinstance(seed_info, dict) and 'position' in seed_info:
+                    gbo_seeds_viz_data.append((np.array(seed_info['position']),
+                                               float(seed_info.get('initial_radius',0.1)),
+                                               seed_info.get('id',f"GBO_Seed_{i}")))
+
+    initial_tumor_seed_plot_info: Optional[Dict] = None
+    tumor_seed_config = config_manager.get_param(config, "tumor_angiogenesis.initial_tumor_seed", {})
+    if tissue_data.get('Tumor_Max_Extent') is not None and np.any(tissue_data['Tumor_Max_Extent']):
+        center_ijk = tumor_seed_config.get('center_voxel_ijk_relative_to_image_grid')
+        radius_vox = tumor_seed_config.get('radius_voxels')
+        if center_ijk and radius_vox and tissue_data.get('affine') is not None:
+            center_world = utils.voxel_to_world(np.array(center_ijk), tissue_data['affine'])[0]
+            # Approximate world radius - this is tricky as voxels can be anisotropic
+            # For visualization, average voxel spacing * radius_vox is a decent estimate
+            avg_voxel_spacing = np.mean(np.abs(np.diag(tissue_data['affine'])[:3]))
+            radius_world = radius_vox * avg_voxel_spacing
+            initial_tumor_seed_plot_info = {'center_world': center_world, 'radius_world': radius_world}
+
+    plot_title = "Initial Simulation Setup: Masks, Arterial Tree/Seeds, Tumor Seed"
+    screenshot_path = os.path.join(output_dir, "initial_setup_visualization.png")
+
+    if PYVISTA_AVAILABLE:
+        plot_vascular_tree_pyvista(
+            graph=initial_arterial_graph, # Plot the parsed VTP tree if available
+            title=plot_title,
+            output_screenshot_path=screenshot_path,
+            tissue_masks=masks_to_plot,
+            gbo_seed_points_world=gbo_seeds_viz_data,
+            initial_tumor_seed_info=initial_tumor_seed_plot_info,
+            color_by_scalar='radius', # Color initial tree by radius
+            config_for_viz_params=config # Pass config for viz params
+        )
     else:
-        logger.info("Displaying PyVista plot. Close window to continue.")
-        plotter.show()
+        logger.warning("PyVista not available, skipping initial setup 3D plot.")
+
+
+def generate_final_visualizations(
+    config: dict, output_dir: str, tissue_data: dict, vascular_graph: Optional[nx.DiGraph],
+    perfusion_map: Optional[np.ndarray] = None, pressure_map_tissue: Optional[np.ndarray] = None,
+    plot_context_masks: bool = True
+    ):
+    # ... (This function remains largely the same as the one from the previous "complete" response)
+    # ... (It will call plot_vascular_tree_pyvista for radius, flow, pressure plots of the FINAL graph)
+    # ... (Ensure it passes `config_for_viz_params=config` to plot_vascular_tree_pyvista)
+    logger.info("Generating final visualizations and quantitative analyses...")
+    masks_to_plot_for_pyvista: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = None
+    if plot_context_masks:
+        masks_to_plot_for_pyvista = {}
+        # Plot active tumor for final viz, not Tumor_Max_Extent unless specifically desired
+        mask_keys = ['domain_mask', 'GM', 'WM', 'CSF', 'Tumor'] # 'Tumor' here is the active one
+        for key in mask_keys:
+            if tissue_data.get(key) is not None and np.any(tissue_data[key]) and tissue_data.get('affine') is not None:
+                masks_to_plot_for_pyvista[key] = (tissue_data[key], tissue_data['affine'])
+        if not masks_to_plot_for_pyvista: masks_to_plot_for_pyvista = None
+    else: logger.info("Context mask plotting disabled for final visualizations.")
+
+    # GBO seeds are less relevant for final plot if tree exists, but tumor seed might be if small
+    # For simplicity, let's not replot GBO seeds here if a tree exists.
+    # Tumor seed sphere could be plotted if desired, using its initial config.
+
+    if vascular_graph and vascular_graph.number_of_nodes() > 0:
+        # ... (Saving VTP, quantitative analyses - as before) ...
+        final_tree_vtp_path = os.path.join(output_dir, "final_plot_vascular_tree.vtp")
+        io_utils.save_vascular_tree_vtp(vascular_graph, final_tree_vtp_path, radius_attr='radius', pressure_attr='pressure', flow_attr='flow_solver')
+        logger.info(f"Final vascular tree saved for analysis: {final_tree_vtp_path}")
+        analyze_radii_distribution(vascular_graph, output_dir)
+        analyze_segment_lengths(vascular_graph, output_dir)
+        analyze_bifurcation_geometry(vascular_graph, output_dir, murray_exponent=config_manager.get_param(config, "vascular_properties.murray_law_exponent", 3.0))
+        analyze_degree_distribution(vascular_graph, output_dir)
+        analyze_network_connectivity(vascular_graph, output_dir)
+        analyze_volumetric_densities(vascular_graph, tissue_data, output_dir)
+
+        if PYVISTA_AVAILABLE:
+            plot_suffix = "" if plot_context_masks else "_no_context"
+            # Radius Plot
+            pv_plot_title_radius = f"Final Vasculature (Radius, {vascular_graph.number_of_nodes()}N, {vascular_graph.number_of_edges()}E)"
+            pv_screenshot_path_radius = os.path.join(output_dir, f"final_vascular_tree_radius_3D{plot_suffix}.png")
+            plot_vascular_tree_pyvista(graph=vascular_graph, title=pv_plot_title_radius, output_screenshot_path=pv_screenshot_path_radius,
+                                       tissue_masks=masks_to_plot_for_pyvista, color_by_scalar='radius', config_for_viz_params=config)
+            # Flow Plot
+            if any('flow_solver' in data for _,_,data in vascular_graph.edges(data=True) if 'flow_solver' in data and np.any(np.isfinite(data['flow_solver']))):
+                pv_plot_title_flow = f"Final Vasculature (Edge Flow)"
+                pv_screenshot_path_flow = os.path.join(output_dir, f"final_vascular_tree_flow_3D{plot_suffix}.png")
+                plot_vascular_tree_pyvista(graph=vascular_graph, title=pv_plot_title_flow, output_screenshot_path=pv_screenshot_path_flow,
+                                           tissue_masks=masks_to_plot_for_pyvista, color_by_scalar='flow_solver', custom_cmap='coolwarm', 
+                                           scalar_bar_title_override="Flow (mm³/s)", config_for_viz_params=config)
+            # Pressure Plot
+            if any('pressure' in data for _,data in vascular_graph.nodes(data=True) if 'pressure' in data and np.any(np.isfinite(data['pressure']))):
+                pv_plot_title_pressure = f"Final Vasculature (Node Pressure)"
+                pv_screenshot_path_pressure = os.path.join(output_dir, f"final_vascular_tree_pressure_3D{plot_suffix}.png")
+                plot_vascular_tree_pyvista(graph=vascular_graph, title=pv_plot_title_pressure, output_screenshot_path=pv_screenshot_path_pressure,
+                                           tissue_masks=masks_to_plot_for_pyvista, color_by_scalar='pressure', custom_cmap='coolwarm', 
+                                           scalar_bar_title_override="Pressure (Pa)", config_for_viz_params=config)
+    # ... (rest of generate_final_visualizations)
+    logger.info("Final visualizations and analyses generation complete.")
 
 
 def generate_final_visualizations(

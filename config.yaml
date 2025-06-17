@@ -2,15 +2,15 @@
 paths:
   output_dir: "output/simulation_results" # Base directory for outputs
   # Input NIfTI files for tissue segmentation
-  wm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_wm_mask.nii.gz"
-  gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_gm_mask.nii.gz"
-  csf_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/mida_total_csf_mask.nii.gz" # Optional
+  wm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_wm_mask_reoriented_RAS.nii.gz"
+  gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_gm_mask_reoriented_RAS.nii"
+  csf_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_csf_mask_reoriented_RAS.nii.gz" # Optional
   tumor_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/tumour_mask.nii.gz" # Optional, for angiogenesis simulation
 
   # Input arterial centerlines (VTP or TXT)
   # These define roots and terminals of measured vasculature.
   # Synthetic vessels sprout from these terminal points.
-  arterial_centerlines: "" # "data/sample_arteries.vtp"
+  arterial_centerlines: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/mida_arteries_mask_centerlines_TARGET_RAS/centerlines_world.vtp" # "data/sample_arteries.vtp"
 
 simulation:
   simulation_name: "mida_gbo_seeds" # Used for naming output subfolder
@@ -56,7 +56,7 @@ vascular_properties:
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 3
+  max_iterations: 2
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -114,13 +114,12 @@ perfusion_solver:
 tumor_angiogenesis:
   enabled: true  # Master switch for this entire module
 
-  num_macro_iterations: 5 # Total number of "days" or major cycles of tumor growth + angiogenesis
+  num_macro_iterations: 3 # Total number of "days" or major cycles of tumor growth + angiogenesis
 
   # --- Initial Tumor Seeding (if not starting from an already active 'Tumor' mask in tissue_data) ---
   initial_tumor_seed:
-    # Voxel coordinates (i,j,k) for the seed center, relative to the NIfTI image grid
+    strategy: "auto_center"
     # Ensure these coordinates are within your Tumor_Max_Extent mask
-    center_voxel_ijk_relative_to_image_grid: [240, 240, 175] # Example: ~center of a 480x480x350 image
     radius_voxels: 3             # Initial radius of the active tumor seed in voxels
 
   # --- Tumor Growth (Mesoscale expansion within Tumor_Max_Extent) ---
@@ -207,10 +206,14 @@ visualization:
   plot_slice_axis: "axial" # 'axial', 'sagittal', 'coronal' for 2D overlay plots
   plot_slice_index: -1 # Index of slice to plot (-1 for middle slice)
   pyvista_cmap_pressure: "coolwarm"
-  pyvista_cmap_radius: "plasma"  # Or "viridis", "coolwarm", etc.
+  pyvista_cmap_radius: "viridis"  # Or "viridis", "coolwarm", etc.
+  seed_point_color: "red"    
   seed_marker_radius_scale: 3.0 # Adjust for good visibility of seed markers
-  pyvista_background_color: "lightgrey"
-  pyvista_cmap_radius: "plasma"
-  seed_marker_radius_scale: 5.0 # Adjust for visibility
-  domain_mask_color: "gray"     # Or any other color
+  pyvista_background_color: "white"
+  domain_mask_color: "lightgrey"     # Or any other color
   domain_mask_opacity: 0.1      # Adjust for visibility
+  plot_initial_setup: true             # NEW: Master switch for the initial setup plot
+  plot_context_masks_final: true     # Existing: For final plot context
+  tumor_seed_marker_color: "magenta" 
+  tumor_max_extent_mask_color: "salmon"
+  active_tumor_mask_color: "darkred"   # For visualizing the active tumor in final plots
