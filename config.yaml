@@ -6,11 +6,11 @@ paths:
   gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_gm_mask_reoriented_RAS.nii"
   csf_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_csf_mask_reoriented_RAS.nii.gz" # Optional
   tumor_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/tumour_mask.nii.gz" # Optional, for angiogenesis simulation
-
+  inspection_dir: "data/inspection" # Directory for saving inspection plots
   # Input arterial centerlines (VTP or TXT)
   # These define roots and terminals of measured vasculature.
   # Synthetic vessels sprout from these terminal points.
-  arterial_centerlines: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/mida_arteries_mask_centerlines_TARGET_RAS/centerlines_world.vtp" # "data/sample_arteries.vtp"
+  # arterial_centerlines: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_NETWORK_v1/mida_arteries_mask_centerlines_TARGET_RAS/centerline_NETWORK_world.vtp" # "data/sample_arteries.vtp"
 
 simulation:
   simulation_name: "mida_gbo_seeds" # Used for naming output subfolder
@@ -21,7 +21,11 @@ simulation:
     pressure: "Pa"
     flow_rate: "mm^3/s" # e.g., mm^3/s
     # Ensure constants.py and parameters below match these units
-
+  use_spherical_domain: True  # Set to True to use a sphere, False for NIfTI
+  spherical_domain_shape_vox: [200, 200, 200] # Define the overall simulation grid size (voxels)
+  spherical_domain_center_vox: [100, 100, 100]   # Center of the sphere in voxel coords
+  spherical_domain_radius_vox: 60          # Radius of the sphere in voxels
+  spherical_domain_voxel_size_mm: [1, 1, 1] # Physical size of voxels [dx, dy, dz]
 tissue_properties:
   # Metabolic rates (blood flow demand per unit volume of tissue, per unit time)
   # Units: e.g., (mm^3_blood / s) / mm^3_tissue = 1/s
@@ -48,15 +52,16 @@ vascular_properties:
   initial_terminal_flow: 1.0e-4 # e.g., mm^3/s
   # Minimum and maximum geometric constraints for synthetic vessels
   min_segment_length: 0.1 # mm
-  max_segment_length: 5 # mm
-  min_radius: 0.005 # mm (e.g. 5 microns, capillary scale)
+  max_segment_length: 3 # mm
+  min_radius: 0.004 # mm (e.g. 5 microns, capillary scale)
   # Relationship: r_i = K_murray * Q_i^(1/murray_law_exponent)
   # K_murray can be derived or set. For now, let's assume it's implicitly handled by radius updates
   # or can be added if explicit scaling is needed.
   # E.g., K_murray = (8 * mu / (PI * pressure_gradient_per_unit_length_optimal))^(-1/4) for Poiseuille flow with optimal shear stress
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
-  max_iterations: 2
+  gbo_growth.enabled: true # Master switch for GBO growth
+  max_iterations: 50
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -70,7 +75,7 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
 
   frontier_search_radius_factor: 3.0 # Multiplies terminal radius
   frontier_search_radius_fixed: 8  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
-  max_voxels_for_Rip: 4000             # Max voxels in a new frontier patch (was 30-50)
+  max_voxels_for_Rip: 3000             # Max voxels in a new frontier patch (was 30-50)
   max_flow_single_terminal: 0.001   # mm^3/s (Max flow before forcing branch. Was 0.0005)
   # Fraction of total metabolic demand that the GBO aims to satisfy.
   target_perfusion_level: 0.8
@@ -81,7 +86,7 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   branching_trigger_territory_voxels: 500 # Branch if territory size (num voxels) exceeds this
   branch_radius_increase_threshold: 1.1
   min_iterations_before_no_growth_stop: 5
-
+  gbo_growth.min_frontier_demand_factor_for_bifurcation: 0.1
   flow_solver_interval: 1     # Run flow solver every 1 GBO iteration. Increase to e.g. 5 or 10 for speed if needed later.
 
   # Parameters for searching for optimal bifurcation
@@ -100,12 +105,12 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
     min_radius_for_growth: 0.005 # mm, stop growing branches if they become too small
   
   seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
-    - id: "seed_A"
-      position: [0.1, 45.4, 65.6] # e.g., [10.0, 25.5, -30.1] in mm
-      initial_radius: 0.5 # mm
-    - id: "seed_B"
-      position: [41.6, 13.9, 12.9]
-      initial_radius: 0.3 # mm
+    - id: "seed_1"
+      position: [60, 70, 80]
+      initial_radius: 2  # mm 
+    - id: "seed_2"
+      position: [140, 140, 90]
+      initial_radius: 1  # mm 
 
 perfusion_solver:
   inlet:pressure: 10000 # Pa (approx 75 mmHg) at arterial roots

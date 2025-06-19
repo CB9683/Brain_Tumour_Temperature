@@ -6,6 +6,5 @@ pandas==2.3.0
 pytest==8.3.5
 pyvista==0.45.2
 PyYAML==6.0.2
-PyYAML==6.0.2
 scikit_learn==1.7.0
 scipy==1.15.3

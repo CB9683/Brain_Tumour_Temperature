@@ -20,6 +20,9 @@ from src import data_structures
 from src import vascular_growth, angiogenesis, perfusion_solver, visualization
 from src.constants import DEFAULT_VOXEL_SIZE_MM, Q_MET_TUMOR_RIM_PER_ML, INITIAL_TERMINAL_FLOW_Q # Added more constants
 
+logger = logging.getLogger(__name__) # Ensure logger is defined for this function's scope
+
+
 def setup_logging(log_level_str: str, log_file: str):
     """Configures logging for the simulation."""
     numeric_level = getattr(logging, log_level_str.upper(), logging.INFO)
@@ -61,11 +64,14 @@ def parse_arguments():
     )
     return parser.parse_args()
 
+# main.py
+# ... (imports as before) ...
+
+logger = logging.getLogger(__name__)
+
+# ... (setup_logging, parse_arguments as before) ...
+
 def load_initial_data(config: dict) -> tuple[dict, Optional[nx.DiGraph]]:
-    """
-    Loads all necessary input data based on the configuration.
-    """
-    logger = logging.getLogger(__name__)
     logger.info("Loading initial data...")
     
     tissue_data = {
@@ -73,153 +79,219 @@ def load_initial_data(config: dict) -> tuple[dict, Optional[nx.DiGraph]]:
         'Tumor_Max_Extent': None, 'Tumor': None, 
         'tumor_rim_mask': None, 'tumor_core_mask': None,
         'VEGF_field': None, 'affine': None, 'voxel_volume': None, 
-        'domain_mask': None, 'metabolic_demand_map': None,
-        'world_coords_flat': None, 'voxel_indices_flat': None,
+        'domain_mask': None, 
+        'anatomical_domain_mask': None, 
+        'gbo_growth_domain_mask': None, 
+        'metabolic_demand_map': None,
+        'world_coords_flat': None, 
+        'voxel_indices_flat': None,  
         'shape': None
     }
 
     paths = config_manager.get_param(config, "paths", {})
-    wm_data, affine_wm, _ = io_utils.load_nifti_image(paths.get("wm_nifti",""))
-    gm_data, affine_gm, _ = io_utils.load_nifti_image(paths.get("gm_nifti",""))
-    
-    if affine_wm is not None: tissue_data['affine'] = affine_wm
-    elif affine_gm is not None: tissue_data['affine'] = affine_gm
-    
-    common_shape = None
-    if wm_data is not None:
-        common_shape = wm_data.shape
-        tissue_data['WM'] = wm_data.astype(bool)
-    if gm_data is not None:
-        if common_shape and gm_data.shape != common_shape:
-            logger.error(f"GM shape {gm_data.shape} mismatch WM {common_shape}. Check inputs.")
-        elif not common_shape: common_shape = gm_data.shape
-        tissue_data['GM'] = gm_data.astype(bool)
+    sim_params = config_manager.get_param(config, "simulation", {})
+    use_sphere = sim_params.get("use_spherical_domain", False)
 
-    if common_shape is None and paths.get("tumor_nifti"):
-        logger.info("Attempting to derive shape and affine from tumor_nifti as GM/WM are missing/invalid.")
-        tumor_final_data_for_shape, affine_tumor_for_shape, _ = io_utils.load_nifti_image(paths["tumor_nifti"])
-        if tumor_final_data_for_shape is not None:
-            common_shape = tumor_final_data_for_shape.shape
-            if tissue_data['affine'] is None and affine_tumor_for_shape is not None:
-                tissue_data['affine'] = affine_tumor_for_shape
-            logger.info(f"Derived common_shape {common_shape} from tumor_nifti.")
-    
-    if tissue_data['affine'] is None:
-        logger.warning("No NIfTI found for affine. Using default identity affine, 1mm voxel size.")
-        tissue_data['affine'] = np.eye(4)
-        for i in range(3): tissue_data['affine'][i,i] = DEFAULT_VOXEL_SIZE_MM
-        if common_shape is None:
-             raise ValueError("Cannot determine tissue domain shape and no affine available.")
+    if use_sphere:
+        logger.info("--- Using SPHERICAL DOMAIN MASK for simulation ---")
+        sph_shape_vox = np.array(sim_params.get("spherical_domain_shape_vox", [100, 100, 100]))
+        sph_center_vox = np.array(sim_params.get("spherical_domain_center_vox", [s//2 for s in sph_shape_vox]))
+        sph_radius_vox = sim_params.get("spherical_domain_radius_vox", min(sph_shape_vox)//3)
+        sph_vox_size_mm = np.array(sim_params.get("spherical_domain_voxel_size_mm", [1.0, 1.0, 1.0]))
 
+        tissue_data['shape'] = tuple(sph_shape_vox)
+        
+        # Create a default affine for the spherical domain
+        # Assumes origin at (0,0,0) world coords for voxel (0,0,0) for simplicity
+        # Adjust if your sphere needs to be in a specific world coordinate system
+        affine_matrix = np.eye(4)
+        affine_matrix[0,0] = sph_vox_size_mm[0]
+        affine_matrix[1,1] = sph_vox_size_mm[1]
+        affine_matrix[2,2] = sph_vox_size_mm[2]
+        tissue_data['affine'] = affine_matrix
+        logger.info(f"Spherical domain: Shape={tissue_data['shape']}, VoxelSize={sph_vox_size_mm}, Affine=\n{affine_matrix}")
+
+        coords = np.ogrid[:sph_shape_vox[0], :sph_shape_vox[1], :sph_shape_vox[2]]
+        distance_sq = ((coords[0] - sph_center_vox[0])**2 +
+                       (coords[1] - sph_center_vox[1])**2 +
+                       (coords[2] - sph_center_vox[2])**2)
+        sphere_mask = distance_sq <= sph_radius_vox**2
+        
+        # Assign the sphere as Grey Matter for simplicity, or your primary tissue type
+        tissue_data['GM'] = sphere_mask.astype(bool)
+        tissue_data['WM'] = np.zeros(tissue_data['shape'], dtype=bool) # No WM
+        tissue_data['CSF'] = np.zeros(tissue_data['shape'], dtype=bool) # No CSF
+        tissue_data['Tumor_Max_Extent'] = np.zeros(tissue_data['shape'], dtype=bool) # No Tumor
+
+        logger.info(f"Generated spherical GM mask with {np.sum(tissue_data['GM'])} voxels.")
+        common_shape = tissue_data['shape'] # Already set
+
+    else: # Original NIfTI loading logic
+        logger.info("--- Using NIFTI MASKS for simulation domain ---")
+        wm_data, affine_wm, _ = io_utils.load_nifti_image(paths.get("wm_nifti",""))
+        gm_data, affine_gm, _ = io_utils.load_nifti_image(paths.get("gm_nifti",""))
+        
+        if affine_wm is not None:
+            tissue_data['affine'] = affine_wm
+        elif affine_gm is not None:
+            tissue_data['affine'] = affine_gm
+        
+        common_shape = None
+        if wm_data is not None:
+            common_shape = wm_data.shape
+            tissue_data['WM'] = wm_data.astype(bool)
+        if gm_data is not None:
+            if common_shape and gm_data.shape != common_shape:
+                logger.error(f"GM shape {gm_data.shape} mismatch WM {common_shape}.")
+            elif not common_shape: 
+                common_shape = gm_data.shape
+            tissue_data['GM'] = gm_data.astype(bool)
+
+        if paths.get("tumor_nifti"):
+            tumor_final_data, affine_tumor, _ = io_utils.load_nifti_image(paths["tumor_nifti"])
+            if tumor_final_data is not None:
+                if common_shape is None:
+                    common_shape = tumor_final_data.shape
+                elif tumor_final_data.shape != common_shape:
+                    logger.error(f"Tumor_Max_Extent shape {tumor_final_data.shape} mismatch domain {common_shape}.")
+                    tumor_final_data = None 
+                if tissue_data['affine'] is None and affine_tumor is not None:
+                    tissue_data['affine'] = affine_tumor
+                if tumor_final_data is not None:
+                     tissue_data['Tumor_Max_Extent'] = tumor_final_data.astype(bool)
+
+        if tissue_data['affine'] is None: 
+            logger.warning("No NIfTI found to determine affine. Using default identity affine and 1mm voxel size.")
+            tissue_data['affine'] = np.eye(4)
+            for i_ax in range(3): tissue_data['affine'][i_ax,i_ax] = constants.DEFAULT_VOXEL_SIZE_MM
+            if common_shape is None:
+                 raise ValueError("Cannot determine tissue domain shape AND no affine available. Critical error.")
+        
+        if common_shape is None: 
+            raise ValueError("Critical: Could not determine a common shape for any tissue data.")
+        tissue_data['shape'] = common_shape
+
+        # Load optional CSF (only if not using sphere)
+        if paths.get("csf_nifti"):
+            csf_data, _, _ = io_utils.load_nifti_image(paths["csf_nifti"])
+            if csf_data is not None and csf_data.shape == common_shape: 
+                tissue_data['CSF'] = csf_data.astype(bool)
+            elif csf_data is not None: 
+                logger.warning(f"CSF shape {csf_data.shape} mismatch domain {common_shape}. Skipping CSF.")
+
+    # ---- Common post-mask-definition steps ----
     tissue_data['voxel_volume'] = utils.get_voxel_volume_from_affine(tissue_data['affine'])
-    if common_shape is None:
-        raise ValueError("Critical: Could not determine a common shape for tissue data.")
-    tissue_data['shape'] = common_shape
 
-    for key_mask in ['CSF', 'Tumor_Max_Extent', 'Tumor', 'tumor_rim_mask', 'tumor_core_mask', 'VEGF_field']:
-        if key_mask not in tissue_data or tissue_data[key_mask] is None:
-            tissue_data[key_mask] = np.zeros(common_shape, dtype=float if key_mask == 'VEGF_field' else bool)
+    for key_mask_init in ['Tumor', 'tumor_rim_mask', 'tumor_core_mask', 'VEGF_field', 
+                          'anatomical_domain_mask', 'gbo_growth_domain_mask']:
+        if key_mask_init not in tissue_data or tissue_data[key_mask_init] is None:
+             tissue_data[key_mask_init] = np.zeros(tissue_data['shape'], dtype=float if key_mask_init == 'VEGF_field' else bool)
+    
+    if tissue_data.get('Tumor_Max_Extent') is None : # Ensure Tumor_Max_Extent always exists
+        tissue_data['Tumor_Max_Extent'] = np.zeros(tissue_data['shape'], dtype=bool)
+    # Ensure CSF is initialized if not loaded (e.g. in sphere mode)
+    if tissue_data.get('CSF') is None:
+        tissue_data['CSF'] = np.zeros(tissue_data['shape'], dtype=bool)
 
-    if paths.get("csf_nifti"):
-        csf_data, _, _ = io_utils.load_nifti_image(paths["csf_nifti"])
-        if csf_data is not None and csf_data.shape == common_shape: tissue_data['CSF'] = csf_data.astype(bool)
-        elif csf_data is not None: logger.warning(f"CSF shape {csf_data.shape} mismatch domain {common_shape}. Skipping.")
 
-    if paths.get("tumor_nifti"):
-        tumor_data_final, affine_tumor, _ = io_utils.load_nifti_image(paths["tumor_nifti"])
-        if tumor_data_final is not None and tumor_data_final.shape == common_shape:
-            tissue_data['Tumor_Max_Extent'] = tumor_data_final.astype(bool)
-            # Affine should be set by now, but double check if only tumor was provided
-            if tissue_data['affine'] is None and affine_tumor is not None:
-                tissue_data['affine'] = affine_tumor
-                tissue_data['voxel_volume'] = utils.get_voxel_volume_from_affine(tissue_data['affine'])
-            logger.info(f"Loaded Tumor_Max_Extent segmentation: {np.sum(tissue_data['Tumor_Max_Extent'])} voxels.")
-        elif tumor_data_final is not None:
-            logger.warning(f"Tumor_Max_Extent shape {tumor_data_final.shape} mismatch domain {common_shape}. Using empty.")
+    anatomical_domain = np.zeros(tissue_data['shape'], dtype=bool)
+    if tissue_data.get('GM') is not None: anatomical_domain = np.logical_or(anatomical_domain, tissue_data['GM'])
+    if tissue_data.get('WM') is not None: anatomical_domain = np.logical_or(anatomical_domain, tissue_data['WM'])
+    if tissue_data.get('CSF') is not None: anatomical_domain = np.logical_or(anatomical_domain, tissue_data['CSF'])
+    if tissue_data.get('Tumor_Max_Extent') is not None: anatomical_domain = np.logical_or(anatomical_domain, tissue_data['Tumor_Max_Extent'])
+    tissue_data['anatomical_domain_mask'] = anatomical_domain
+    logger.info(f"Anatomical domain mask created with {np.sum(anatomical_domain)} voxels.")
 
-    domain_mask_healthy = np.zeros(common_shape, dtype=bool)
-    if tissue_data.get('WM') is not None: domain_mask_healthy = np.logical_or(domain_mask_healthy, tissue_data['WM'])
-    if tissue_data.get('GM') is not None: domain_mask_healthy = np.logical_or(domain_mask_healthy, tissue_data['GM'])
-    tissue_data['domain_mask'] = domain_mask_healthy
-    logger.info(f"Initial healthy GBO domain_mask set with {np.sum(domain_mask_healthy)} voxels (may overlap future tumor area).")
+    gbo_growth_domain = np.zeros(tissue_data['shape'], dtype=bool)
+    if tissue_data.get('GM') is not None: gbo_growth_domain = np.logical_or(gbo_growth_domain, tissue_data['GM'])
+    if tissue_data.get('WM') is not None: gbo_growth_domain = np.logical_or(gbo_growth_domain, tissue_data['WM'])
+    tissue_data['gbo_growth_domain_mask'] = gbo_growth_domain
+    tissue_data['domain_mask'] = gbo_growth_domain 
+    logger.info(f"GBO growth domain_mask set with {np.sum(tissue_data['domain_mask'])} voxels.")
 
-    voxel_indices = np.array(np.where(tissue_data['domain_mask'])).T
-    if voxel_indices.size > 0:
-        tissue_data['voxel_indices_flat'] = voxel_indices
-        tissue_data['world_coords_flat'] = utils.voxel_to_world(voxel_indices, tissue_data['affine'])
+    voxel_indices_gbo_domain = np.array(np.where(tissue_data['domain_mask'])).T
+    if voxel_indices_gbo_domain.size > 0:
+        tissue_data['voxel_indices_flat'] = voxel_indices_gbo_domain
+        tissue_data['world_coords_flat'] = utils.voxel_to_world(voxel_indices_gbo_domain, tissue_data['affine'])
     else:
         tissue_data['voxel_indices_flat'] = np.empty((0,3), dtype=int)
         tissue_data['world_coords_flat'] = np.empty((0,3), dtype=float)
-        logger.warning("Initial healthy domain_mask is empty. Healthy GBO might not run or will rely on fallback seeding if enabled.")
+        logger.warning("GBO growth domain_mask is empty. Healthy GBO might not find tissue to grow into.")
 
-    segmentations_for_healthy_demand = {k: tissue_data[k] for k in ['WM', 'GM', 'CSF'] if tissue_data.get(k) is not None and np.any(tissue_data[k])}
+    # Initial metabolic demand map:
+    # If sphere mode, only GM exists. If NIfTI mode, uses loaded GM/WM/CSF.
+    segmentations_for_initial_demand = {
+        k: tissue_data[k] for k in ['WM', 'GM', 'CSF'] 
+        if tissue_data.get(k) is not None and np.any(tissue_data[k])
+    }
+    if not segmentations_for_initial_demand and use_sphere and tissue_data.get('GM') is not None:
+        # If sphere mode and only GM is defined, make sure it's used for demand.
+        segmentations_for_initial_demand['GM'] = tissue_data['GM']
+        
     tissue_data['metabolic_demand_map'] = data_structures.get_metabolic_demand_map(
-        segmentations_for_healthy_demand, config, tissue_data['voxel_volume']
+        segmentations_for_initial_demand, config, tissue_data['voxel_volume']
     )
-    if tissue_data['metabolic_demand_map'] is None: # Should be initialized by get_metabolic_demand_map
-        tissue_data['metabolic_demand_map'] = np.zeros(common_shape, dtype=np.float32)
+    if tissue_data['metabolic_demand_map'] is None: 
+        tissue_data['metabolic_demand_map'] = np.zeros(tissue_data['shape'], dtype=np.float32)
 
-
+    # --- Arterial Centerline Loading (remains the same) ---
     initial_arterial_graph = None
-    centerline_path_key = "arterial_centerlines" # Key in config
+    # ... (rest of your arterial centerline loading code from the previous version) ...
+    # Make sure this part is robust to `use_sphere = True` (e.g. if no centerlines are expected with sphere)
+    centerline_path_key = "arterial_centerlines"
     centerline_file_str = paths.get(centerline_path_key)
     
     if centerline_file_str:
-        input_data_base_dir = paths.get("input_data_dir", ".")
+        input_data_base_dir = paths.get("input_data_dir", ".") 
         if not os.path.isabs(centerline_file_str):
             full_centerline_path = os.path.join(input_data_base_dir, centerline_file_str)
         else:
             full_centerline_path = centerline_file_str
         
         logger.info(f"Attempting to load arterial centerlines from: {full_centerline_path}")
-        poly_data = None
-        if full_centerline_path.endswith((".vtp", ".vtk")): # Allow .vtk too
+        poly_data = None 
+        if full_centerline_path.endswith((".vtp", ".vtk")):
             poly_data = io_utils.load_arterial_centerlines_vtp(full_centerline_path)
         elif full_centerline_path.endswith(".txt"):
             default_radius_centerline = config_manager.get_param(config, "vascular_properties.centerline_default_radius", 0.1)
             poly_data = io_utils.load_arterial_centerlines_txt(full_centerline_path, radius_default=default_radius_centerline)
-        else: logger.warning(f"Unsupported arterial centerline file format: {full_centerline_path}")
+        else: 
+            logger.warning(f"Unsupported arterial centerline file format: {full_centerline_path}")
 
         if poly_data and poly_data.n_points > 0:
             logger.info(f"Processing VTP/PolyData with {poly_data.n_points} points and {poly_data.n_cells} cells.")
             initial_arterial_graph = data_structures.create_empty_vascular_graph()
-            pv_point_to_nx_node = {} 
+            pv_point_to_nx_node: Dict[int, str] = {} 
             node_id_counter = 0
             default_min_radius = config_manager.get_param(config, "vascular_properties.min_radius", 0.01)
 
-            radii_array = poly_data.point_data.get('Radius') # Case-sensitive
-            if radii_array is None:
-                logger.warning("'Radius' point data array not found in VTP. Using default_min_radius for all points.")
+            radii_array = poly_data.point_data.get('radius') 
+            if radii_array is None: logger.warning("'Radius' point data array not found in VTP. Using default_min_radius.")
             elif len(radii_array) != poly_data.n_points:
-                logger.warning(f"Mismatch in length of 'Radius' array ({len(radii_array)}) and n_points ({poly_data.n_points}). Using default_min_radius.")
-                radii_array = None
+                logger.warning(f"Mismatch in 'Radius' array length. Using default_min_radius."); radii_array = None
 
             for pt_idx in range(poly_data.n_points):
                 pos = poly_data.points[pt_idx]
-                radius = float(radii_array[pt_idx]) if radii_array is not None else default_min_radius
+                radius = float(radii_array[pt_idx]) if radii_array is not None and pt_idx < len(radii_array) else default_min_radius
                 current_node_id = f"m_{node_id_counter}"; node_id_counter += 1
                 data_structures.add_node_to_graph(initial_arterial_graph, current_node_id,
                                                   pos=pos, radius=radius, type='measured_point')
                 pv_point_to_nx_node[pt_idx] = current_node_id
-            
             logger.debug(f"Added {initial_arterial_graph.number_of_nodes()} nodes from VTP points.")
 
-            vtp_polyline_start_nodes = set()
-            vtp_polyline_end_nodes = set()
+            vtp_polyline_start_nodes: Set[str] = set()
+            vtp_polyline_end_nodes: Set[str] = set()
 
             for i_cell in range(poly_data.n_cells):
                 cell_point_indices = poly_data.get_cell(i_cell).point_ids
-                if len(cell_point_indices) < 1: continue # Should not happen for valid cells
+                if len(cell_point_indices) < 1: continue
                 
-                start_node_idx_original_vtp = cell_point_indices[0]
-                start_node_id_nx = pv_point_to_nx_node.get(start_node_idx_original_vtp)
+                start_node_id_nx = pv_point_to_nx_node.get(cell_point_indices[0])
                 if start_node_id_nx: vtp_polyline_start_nodes.add(start_node_id_nx)
 
                 if len(cell_point_indices) >= 2:
-                    end_node_idx_original_vtp = cell_point_indices[-1]
-                    end_node_id_nx = pv_point_to_nx_node.get(end_node_idx_original_vtp)
+                    end_node_id_nx = pv_point_to_nx_node.get(cell_point_indices[-1])
                     if end_node_id_nx: vtp_polyline_end_nodes.add(end_node_id_nx)
-
                     for k_edge in range(len(cell_point_indices) - 1):
                         node_u_id = pv_point_to_nx_node.get(cell_point_indices[k_edge])
                         node_v_id = pv_point_to_nx_node.get(cell_point_indices[k_edge + 1])
@@ -227,7 +299,7 @@ def load_initial_data(config: dict) -> tuple[dict, Optional[nx.DiGraph]]:
                             rad_u = initial_arterial_graph.nodes[node_u_id]['radius']
                             rad_v = initial_arterial_graph.nodes[node_v_id]['radius']
                             source_node, target_node = node_u_id, node_v_id
-                            if (rad_u < rad_v and not np.isclose(rad_u, rad_v)): # Prefer flow from larger to smaller
+                            if (rad_u < rad_v and not np.isclose(rad_u, rad_v)): 
                                 source_node, target_node = node_v_id, node_u_id
                             if not initial_arterial_graph.has_edge(source_node, target_node):
                                 data_structures.add_edge_to_graph(initial_arterial_graph, source_node, target_node, type='measured_segment')
@@ -235,30 +307,52 @@ def load_initial_data(config: dict) -> tuple[dict, Optional[nx.DiGraph]]:
             logger.info(f"Added {initial_arterial_graph.number_of_edges()} edges from VTP cells.")
             logger.info(f"Identified {len(vtp_polyline_start_nodes)} VTP polyline start nodes and {len(vtp_polyline_end_nodes)} VTP polyline end nodes.")
             
+            roi_mask_for_vtp_typing = tissue_data.get('anatomical_domain_mask')
+            
             for node_id in list(initial_arterial_graph.nodes()):
                 in_deg = initial_arterial_graph.in_degree(node_id)
                 out_deg = initial_arterial_graph.out_degree(node_id)
                 node_data = initial_arterial_graph.nodes[node_id]
-                is_polyline_end = node_id in vtp_polyline_end_nodes
+                is_vtp_cell_end = node_id in vtp_polyline_end_nodes
 
                 if in_deg == 0 and out_deg > 0 : node_data['type'] = 'measured_root'
-                elif out_deg == 0 and in_deg > 0:
-                    if is_polyline_end: node_data['type'] = 'measured_terminal'
-                    else: node_data['type'] = 'measured_segment_point'; logger.debug(f"Node {node_id} out_deg=0 but not VTP end, type: seg_point.")
+                elif out_deg == 0 and in_deg > 0: 
+                    if is_vtp_cell_end:
+                        is_within_anatomical_domain = False
+                        if roi_mask_for_vtp_typing is not None and tissue_data['affine'] is not None:
+                            pos_world = node_data['pos']
+                            pos_vox_int = np.round(utils.world_to_voxel(pos_world, tissue_data['affine'])).astype(int)
+                            if utils.is_voxel_in_bounds(pos_vox_int, roi_mask_for_vtp_typing.shape) and \
+                               roi_mask_for_vtp_typing[tuple(pos_vox_int)]:
+                                is_within_anatomical_domain = True
+                        
+                        if is_within_anatomical_domain:
+                            node_data['type'] = 'measured_terminal_in_anatomical_domain'
+                        else:
+                            node_data['type'] = 'measured_external_outlet'
+                            ext_flow = config_manager.get_param(config, "vascular_properties.external_outlet_default_flow", 0.001)
+                            node_data['Q_flow'] = -ext_flow 
+                    else: 
+                        node_data['type'] = 'measured_segment_point' 
+                        logger.debug(f"Node {node_id} has out_deg=0 but not VTP end. Type: seg_point.")
                 elif out_deg > 1: node_data['type'] = 'measured_bifurcation'
                 elif in_deg > 1 and out_deg == 1: node_data['type'] = 'measured_convergence'
                 elif in_deg == 1 and out_deg == 1: node_data['type'] = 'measured_segment_point'
                 elif in_deg == 0 and out_deg == 0: node_data['type'] = 'measured_isolated_point'
-                else: node_data['type'] = 'measured_complex_junction'; logger.debug(f"Node {node_id} complex: in={in_deg}, out={out_deg}.")
+                else: node_data['type'] = 'measured_complex_junction'
 
             num_roots = sum(1 for _, data in initial_arterial_graph.nodes(data=True) if data['type'] == 'measured_root')
-            num_terminals = sum(1 for _, data in initial_arterial_graph.nodes(data=True) if data['type'] == 'measured_terminal')
-            logger.info(f"Refined node types: {num_roots} roots, {num_terminals} measured_terminals.")
-    else: logger.info("No 'arterial_centerlines' path specified in config.")
+            num_terminals_roi = sum(1 for _, data in initial_arterial_graph.nodes(data=True) if data['type'] == 'measured_terminal_in_anatomical_domain')
+            num_terminals_ext = sum(1 for _, data in initial_arterial_graph.nodes(data=True) if data['type'] == 'measured_external_outlet')
+            logger.info(f"Refined VTP node types: {num_roots} roots, {num_terminals_roi} ROI terminals, {num_terminals_ext} external outlets.")
+    else: 
+        logger.info("No 'arterial_centerlines' path specified in config. GBO will start from config seeds or fallback.")
+
 
     return tissue_data, initial_arterial_graph
 
 
+# ... (main function definition as before, calling load_initial_data)
 def main():
     args = parse_arguments()
     try:
@@ -409,15 +503,14 @@ if __name__ == "__main__":
     temp_config_path = "config.yaml"
     if not os.path.exists(temp_config_path):
         try:
-            # Assuming config_manager can create a default if you implement it
-            # config_manager.create_default_config(temp_config_path)
-            print(f"Warning: {temp_config_path} not found. Attempting to run with default parameters where possible.")
-            print("Please create a config.yaml or provide one via --config argument.")
-            # Create a minimal dummy config if none exists, so get_param doesn't fail immediately
-            if not os.path.exists(temp_config_path):
-                 with open(temp_config_path, "w") as f_cfg:
-                    f_cfg.write("paths:\n  input_data_dir: \"data\"\n  output_dir: \"output/simulation_results\"\n")
-                 print(f"Created minimal dummy {temp_config_path}. Please customize it.")
+            config_manager.create_default_config(temp_config_path)
+            # print(f"Warning: {temp_config_path} not found. Attempting to run with default parameters where possible.")
+            # print("Please create a config.yaml or provide one via --config argument.")
+            # # Create a minimal dummy config if none exists, so get_param doesn't fail immediately
+            # if not os.path.exists(temp_config_path):
+            #      with open(temp_config_path, "w") as f_cfg:
+            #         f_cfg.write("paths:\n  input_data_dir: \"data\"\n  output_dir: \"output/simulation_results\"\n")
+            #      print(f"Created minimal dummy {temp_config_path}. Please customize it.")
         except Exception as e: print(f"Could not create dummy config: {e}")
 
     # Ensure data and output directories are attempted to be created based on a minimal config load

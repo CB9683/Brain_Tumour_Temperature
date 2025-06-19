@@ -382,6 +382,8 @@ def plot_vascular_tree_pyvista(
 
     # Plot GBO Seed points (if any)
     if gbo_seed_points_world:
+        seed_color = config_manager.get_param(cfg, "visualization.seed_point_color", "red") # Assuming cfg is defined from config_for_viz_params
+        seed_radius_scale = config_manager.get_param(cfg, "visualization.seed_marker_radius_scale", 2.0)
         for seed_pos, seed_initial_radius, seed_name in gbo_seed_points_world:
             marker_base_size = np.mean(spacing_for_markers) * 0.5
             visual_marker_radius = max(marker_base_size * seed_radius_scale, seed_initial_radius * 2.0, 0.05 * np.mean(spacing_for_markers))
