@@ -21,7 +21,7 @@ simulation:
     pressure: "Pa"
     flow_rate: "mm^3/s" # e.g., mm^3/s
     # Ensure constants.py and parameters below match these units
-  use_spherical_domain: True  # Set to True to use a sphere, False for NIfTI
+  use_spherical_domain: False  # Set to True to use a sphere, False for NIfTI
   spherical_domain_shape_vox: [200, 200, 200] # Define the overall simulation grid size (voxels)
   spherical_domain_center_vox: [100, 100, 100]   # Center of the sphere in voxel coords
   spherical_domain_radius_vox: 60          # Radius of the sphere in voxels
@@ -76,11 +76,17 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   frontier_search_radius_factor: 3.0 # Multiplies terminal radius
   frontier_search_radius_fixed: 8  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
   max_voxels_for_Rip: 3000             # Max voxels in a new frontier patch (was 30-50)
-  max_flow_single_terminal: 0.001   # mm^3/s (Max flow before forcing branch. Was 0.0005)
+  max_flow_single_terminal: 0.004  # mm^3/s (Max flow before forcing branch. Was 0.0005)
   # Fraction of total metabolic demand that the GBO aims to satisfy.
-  target_perfusion_level: 0.8
-  target_domain_perfusion_fraction: 0.8
+  target_perfusion_level: 0.95
+  target_domain_perfusion_fraction: 0.95
 
+  pruning:
+    enabled: True
+    interval: 3  # How often to run pruning (e.g., every 3 GBO iterations)
+    min_flow_for_survival: 1.0e-7 # Segments with flow (abs) below this are candidates (mm^3/s)
+    min_radius_for_survival: 0.0051 # Segments with radius below this are candidates (mm), slightly > min_radius
+    preserve_path_to_active_demand_terminals: True # Try to keep paths to terminals that still have demand
   # Criteria for triggering a bifurcation attempt for a terminal
   branching_trigger_radius_factor: 5 # Branch if current radius > factor * radius_at_last_branch (or initial)
   branching_trigger_territory_voxels: 500 # Branch if territory size (num voxels) exceeds this
@@ -105,13 +111,186 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
     min_radius_for_growth: 0.005 # mm, stop growing branches if they become too small
   
   seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
-    - id: "seed_1"
-      position: [60, 70, 80]
-      initial_radius: 2  # mm 
-    - id: "seed_2"
-      position: [140, 140, 90]
-      initial_radius: 1  # mm 
-
+  -   id: seed_1
+      position:
+      - -1.336
+      - -21.616
+      - 25.53
+      initial_radius: 1.744
+  -   id: seed_2
+      position:
+      - -0.835
+      - -34.575
+      - -14.099
+      initial_radius: 0.34
+  -   id: seed_3
+      position:
+      - 27.259
+      - -22.535
+      - 80.565
+      initial_radius: 0.728
+  -   id: seed_4
+      position:
+      - 60.204
+      - 1.552
+      - 7.573
+      initial_radius: 0.711
+  -   id: seed_5
+      position:
+      - -25.138
+      - 29.939
+      - 17.637
+      initial_radius: 1.325
+  -   id: seed_6
+      position:
+      - -52.483
+      - 29.913
+      - 19.984
+      initial_radius: 0.423
+  -   id: seed_7
+      position:
+      - -41.835
+      - -49.993
+      - 38.268
+      initial_radius: 1.662
+  -   id: seed_8
+      position:
+      - 47.39
+      - 31.298
+      - 25.961
+      initial_radius: 1.026
+  -   id: seed_9
+      position:
+      - 20.273
+      - 82.097
+      - 61.83
+      initial_radius: 0.569
+  -   id: seed_10
+      position:
+      - 14.323
+      - 96.054
+      - 39.681
+      initial_radius: 0.913
+  -   id: seed_11
+      position:
+      - -36.326
+      - 33.97
+      - -2.79
+      initial_radius: 1.089
+  -   id: seed_12
+      position:
+      - -41.492
+      - 31.401
+      - 18.071
+      initial_radius: 1.312
+  -   id: seed_13
+      position:
+      - 46.352
+      - -27.972
+      - 38.362
+      initial_radius: 1.836
+  -   id: seed_14
+      position:
+      - -9.287
+      - -39.228
+      - 75.913
+      initial_radius: 1.814
+  -   id: seed_15
+      position:
+      - 1.611
+      - 61.082
+      - 14.944
+      initial_radius: 0.813
+  -   id: seed_16
+      position:
+      - 23.288
+      - -8.593
+      - 5.379
+      initial_radius: 1.195
+  -   id: seed_17
+      position:
+      - -47.027
+      - -20.983
+      - 34.246
+      initial_radius: 0.338
+  -   id: seed_18
+      position:
+      - 58.801
+      - 26.163
+      - 41.944
+      initial_radius: 0.249
+  -   id: seed_19
+      position:
+      - -62.924
+      - -12.712
+      - 24.78
+      initial_radius: 0.824
+  -   id: seed_20
+      position:
+      - 6.121
+      - 20.759
+      - 47.749
+      initial_radius: 1.687
+  -   id: seed_21
+      position:
+      - -9.228
+      - 73.155
+      - 37.469
+      initial_radius: 1.674
+  -   id: seed_22
+      position:
+      - 2.72
+      - 30.778
+      - 29.681
+      initial_radius: 0.23
+  -   id: seed_23
+      position:
+      - -36.904
+      - 63.778
+      - 53.533
+      initial_radius: 1.279
+  -   id: seed_24
+      position:
+      - 16.423
+      - 2.868
+      - 80.927
+      initial_radius: 1.655
+  -   id: seed_25
+      position:
+      - 46.176
+      - 39.696
+      - 18.071
+      initial_radius: 1.266
+  -   id: seed_26
+      position:
+      - 2.248
+      - 28.588
+      - 31.66
+      initial_radius: 1.791
+  -   id: seed_27
+      position:
+      - 17.449
+      - 8.197
+      - 89.397
+      initial_radius: 0.979
+  -   id: seed_28
+      position:
+      - 43.137
+      - 38.266
+      - 61.13
+      initial_radius: 0.325
+  -   id: seed_29
+      position:
+      - 8.143
+      - -44.423
+      - 43.03
+      initial_radius: 1.102
+  -   id: seed_30
+      position:
+      - -15.072
+      - 10.769
+      - 87.304
+      initial_radius: 2.63
 perfusion_solver:
   inlet:pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
   terminal_outlet_pressure: 2000 # Pa (approx 15 mmHg)
@@ -202,10 +381,11 @@ perfusion_solver:
 
   # For 1D/3D coupling: Q_terminal = coupling_beta * (P_vessel_terminal - P_tissue_at_terminal)
   coupling_beta: 1.0e-7 # mm^3 / (s*Pa) (if units are mm, s, Pa)
-  max_iterations_coupling: 20
+  max_iterations_coupling: 50
   convergence_tolerance_coupling: 1.0e-4 # Relative change in flow/pressure
 
 visualization:
+  save_initial_masks: true
   save_intermediate_steps: false # If true, save tree/maps at certain GBO iterations
   intermediate_step_interval: 5 # Save every N iterations
   plot_slice_axis: "axial" # 'axial', 'sagittal', 'coronal' for 2D overlay plots
@@ -222,3 +402,4 @@ visualization:
   tumor_seed_marker_color: "magenta" 
   tumor_max_extent_mask_color: "salmon"
   active_tumor_mask_color: "darkred"   # For visualizing the active tumor in final plots
+  snapshot_iteration_for_blender: 3

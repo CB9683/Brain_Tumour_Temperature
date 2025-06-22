@@ -304,33 +304,29 @@ def analyze_volumetric_densities(graph: nx.DiGraph, tissue_data: dict, output_di
 def plot_vascular_tree_pyvista(
     graph: Optional[nx.DiGraph],
     title: str = "Vascular Tree",
-    # ... (other existing parameters: background_color, cmap_radius, etc.)
     output_screenshot_path: Optional[str] = None,
     tissue_masks: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = None,
-    gbo_seed_points_world: Optional[List[Tuple[np.ndarray, float, str]]] = None, # Renamed for clarity
-    initial_tumor_seed_info: Optional[Dict] = None, # New: {'center_world': np.array, 'radius_world': float}
-    # ... (other existing parameters: domain_outline_color, etc.)
+    # REMOVED: gbo_seed_points_world: Optional[List[Tuple[np.ndarray, float, str]]] = None, 
+    initial_tumor_seed_info: Optional[Dict] = None,
     color_by_scalar: Optional[str] = 'radius', 
     scalar_bar_title_override: Optional[str] = None,
     custom_cmap: Optional[str] = None,
-    config_for_viz_params: Optional[dict] = None # Pass config for viz specific params
+    config_for_viz_params: Optional[dict] = None 
     ):
     if not PYVISTA_AVAILABLE: logger.warning("PyVista not available. Skipping 3D PyVista plot."); return
 
-    # Fetch viz params from config if provided, else use hardcoded defaults
     cfg = config_for_viz_params if config_for_viz_params else {}
     bg_color = config_manager.get_param(cfg, "visualization.pyvista_background_color", "white")
     default_cmap_radius = config_manager.get_param(cfg, "visualization.pyvista_cmap_radius", "viridis")
-    seed_color = config_manager.get_param(cfg, "visualization.seed_point_color", "red")
-    seed_radius_scale = config_manager.get_param(cfg, "visualization.seed_marker_radius_scale", 5.0)
+    # seed_color = config_manager.get_param(cfg, "visualization.seed_point_color", "red") # No longer used here directly
+    # seed_radius_scale = config_manager.get_param(cfg, "visualization.seed_marker_radius_scale", 5.0) # No longer used here
     tumor_seed_color = config_manager.get_param(cfg, "visualization.tumor_seed_marker_color", "magenta")
-
 
     plotter = pv.Plotter(off_screen=output_screenshot_path is not None, window_size=[1200,900])
     plotter.background_color = bg_color
     plotter.add_title(title, font_size=16)
 
-    spacing_for_markers = np.array([1.0, 1.0, 1.0]) # Default
+    spacing_for_markers = np.array([1.0, 1.0, 1.0]) 
 
     if tissue_masks:
         mask_colors_default = {
@@ -338,60 +334,42 @@ def plot_vascular_tree_pyvista(
             "domain_mask": config_manager.get_param(cfg, "visualization.domain_mask_color", "lightgray"),
             "CSF": "lightcyan",
             "Tumor_Max_Extent": config_manager.get_param(cfg, "visualization.tumor_max_extent_mask_color", "salmon"),
-            "Tumor": config_manager.get_param(cfg, "visualization.active_tumor_mask_color", "darkred") # For active tumor
+            "Tumor": config_manager.get_param(cfg, "visualization.active_tumor_mask_color", "darkred")
         }
         mask_opacities_default = {
             "GM": 0.2, "WM": 0.2, 
             "domain_mask": config_manager.get_param(cfg, "visualization.domain_mask_opacity", 0.1),
             "CSF": 0.1,
             "Tumor_Max_Extent": 0.15,
-            "Tumor": 0.3 # Active tumor slightly more opaque
+            "Tumor": 0.3 
         }
 
         for mask_name, mask_data_tuple in tissue_masks.items():
             if not isinstance(mask_data_tuple, tuple) or len(mask_data_tuple) != 2: continue
             mask_data, affine = mask_data_tuple
             if mask_data is None or not np.any(mask_data) or affine is None: continue
-
             logger.info(f"Plotting context mask '{mask_name}': Shape={mask_data.shape}, Sum={np.sum(mask_data)}")
             try:
                 dims = np.array(mask_data.shape)
                 current_spacing = np.abs(np.diag(affine)[:3])
                 origin = affine[:3, 3]
-                if np.all(current_spacing > constants.EPSILON): # Update if valid spacing
+                if np.all(current_spacing > constants.EPSILON): 
                     spacing_for_markers = current_spacing
-
                 grid = pv.ImageData(dimensions=dims, spacing=current_spacing, origin=origin)
                 grid.point_data[mask_name] = mask_data.flatten(order="F").astype(float)
                 contour = grid.contour([0.5], scalars=mask_name, rng=[0,1])
-
                 if contour.n_points > 0:
                     color = mask_colors_default.get(mask_name, "grey")
                     opacity = mask_opacities_default.get(mask_name, 0.1)
                     plotter.add_mesh(contour, color=color, opacity=opacity, style='surface')
-                    logger.debug(f"Mask '{mask_name}' contour bounds: {contour.bounds}")
-                    if mask_name == "domain_mask" and output_screenshot_path: # For initial setup plot mainly
-                        debug_contour_path = os.path.join(os.path.dirname(output_screenshot_path), f"debug_plot_{mask_name}_contour.vtk")
-                        try: contour.save(debug_contour_path)
-                        except Exception as e_save: logger.error(f"Could not save debug contour {mask_name}: {e_save}")
-
                 else: logger.warning(f"No contour generated for mask '{mask_name}'.")
             except Exception as e_mask: logger.error(f"Error plotting mask '{mask_name}': {e_mask}", exc_info=True)
     else:
         logger.info("No tissue masks provided for this plot.")
 
-    # Plot GBO Seed points (if any)
-    if gbo_seed_points_world:
-        seed_color = config_manager.get_param(cfg, "visualization.seed_point_color", "red") # Assuming cfg is defined from config_for_viz_params
-        seed_radius_scale = config_manager.get_param(cfg, "visualization.seed_marker_radius_scale", 2.0)
-        for seed_pos, seed_initial_radius, seed_name in gbo_seed_points_world:
-            marker_base_size = np.mean(spacing_for_markers) * 0.5
-            visual_marker_radius = max(marker_base_size * seed_radius_scale, seed_initial_radius * 2.0, 0.05 * np.mean(spacing_for_markers))
-            plotter.add_mesh(pv.Sphere(center=seed_pos, radius=visual_marker_radius), color=seed_color, opacity=0.9)
-            plotter.add_point_labels(seed_pos + np.array([0,0,visual_marker_radius*2]), [seed_name], font_size=10, text_color=seed_color)
+    # REMOVED GBO SEED POINTS PLOTTING FROM HERE
+    # It's in visualize_initial_setup
 
-
-    # Plot Initial Tumor Seed Sphere (New)
     if initial_tumor_seed_info:
         center_w = initial_tumor_seed_info.get('center_world')
         radius_w = initial_tumor_seed_info.get('radius_world')
@@ -400,11 +378,6 @@ def plot_vascular_tree_pyvista(
             plotter.add_mesh(pv.Sphere(center=center_w, radius=radius_w), color=tumor_seed_color, opacity=0.5)
             plotter.add_point_labels(center_w + np.array([0,0,radius_w*1.5]), ["Initial Tumor Seed"], font_size=10, text_color=tumor_seed_color)
 
-
-    # Plot Vascular Graph (if any)
-    # ... (The existing graph plotting logic from the previous "complete" visualization.py version) ...
-    # ... This includes creating tree_mesh, handling point/cell data for scalars ...
-    # ... Make sure to use `default_cmap_radius` from fetched config ...
     tree_mesh_bounds_logged = False
     if graph is not None and graph.number_of_nodes() > 0:
         points, lines, node_to_idx, idx_counter = [], [], {}, 0
@@ -449,7 +422,6 @@ def plot_vascular_tree_pyvista(
                             if 'radius' in tree_mesh.point_data and np.any(np.isfinite(tree_mesh.point_data['radius'])):
                                 plotter.add_mesh(tree_mesh, scalars='radius', line_width=3, cmap=default_cmap_radius, render_lines_as_tubes=True, scalar_bar_args={'title': 'Radius (mm)', **sargs})
                             else: plotter.add_mesh(tree_mesh, color="darkgrey", line_width=2, render_lines_as_tubes=True)
-                    # ... (Glyphing for points only if no lines was here, can be added back if needed) ...
     if not tree_mesh_bounds_logged: logger.info("No vascular graph provided or it was empty.")
 
     plotter.camera_position = 'iso'
@@ -459,7 +431,6 @@ def plot_vascular_tree_pyvista(
     else: plotter.show()
 
 
-# Modify generate_final_visualizations or add a new function for initial setup plot
 def visualize_initial_setup(
     config: dict, output_dir: str, tissue_data: dict, 
     initial_arterial_graph: Optional[nx.DiGraph]
@@ -473,8 +444,9 @@ def visualize_initial_setup(
             masks_to_plot[key] = (tissue_data[key], tissue_data['affine'])
             logger.info(f"Added '{key}' to initial setup plot.")
 
+    # GBO seeds specific visualization logic - this should be kept in visualize_initial_setup
     gbo_seeds_viz_data: List[Tuple[np.ndarray, float, str]] = []
-    if not initial_arterial_graph or initial_arterial_graph.number_of_nodes() == 0: # Only plot config seeds if no VTP graph
+    if not initial_arterial_graph or initial_arterial_graph.number_of_nodes() == 0:
         config_gbo_seeds = config_manager.get_param(config, "gbo_growth.seed_points", [])
         if config_gbo_seeds and isinstance(config_gbo_seeds, list):
             for i, seed_info in enumerate(config_gbo_seeds):
@@ -490,8 +462,6 @@ def visualize_initial_setup(
         radius_vox = tumor_seed_config.get('radius_voxels')
         if center_ijk and radius_vox and tissue_data.get('affine') is not None:
             center_world = utils.voxel_to_world(np.array(center_ijk), tissue_data['affine'])[0]
-            # Approximate world radius - this is tricky as voxels can be anisotropic
-            # For visualization, average voxel spacing * radius_vox is a decent estimate
             avg_voxel_spacing = np.mean(np.abs(np.diag(tissue_data['affine'])[:3]))
             radius_world = radius_vox * avg_voxel_spacing
             initial_tumor_seed_plot_info = {'center_world': center_world, 'radius_world': radius_world}
@@ -500,15 +470,17 @@ def visualize_initial_setup(
     screenshot_path = os.path.join(output_dir, "initial_setup_visualization.png")
 
     if PYVISTA_AVAILABLE:
+        # Corrected call to plot_vascular_tree_pyvista for visualize_initial_setup
+        # It *does* use gbo_seed_points_world
         plot_vascular_tree_pyvista(
-            graph=initial_arterial_graph, # Plot the parsed VTP tree if available
+            graph=initial_arterial_graph, 
             title=plot_title,
             output_screenshot_path=screenshot_path,
             tissue_masks=masks_to_plot,
-            gbo_seed_points_world=gbo_seeds_viz_data,
+            gbo_seed_points_world=gbo_seeds_viz_data, # THIS FUNCTION USES IT
             initial_tumor_seed_info=initial_tumor_seed_plot_info,
-            color_by_scalar='radius', # Color initial tree by radius
-            config_for_viz_params=config # Pass config for viz params
+            color_by_scalar='radius', 
+            config_for_viz_params=config 
         )
     else:
         logger.warning("PyVista not available, skipping initial setup 3D plot.")
@@ -517,99 +489,23 @@ def visualize_initial_setup(
 def generate_final_visualizations(
     config: dict, output_dir: str, tissue_data: dict, vascular_graph: Optional[nx.DiGraph],
     perfusion_map: Optional[np.ndarray] = None, pressure_map_tissue: Optional[np.ndarray] = None,
-    plot_context_masks: bool = True
-    ):
-    # ... (This function remains largely the same as the one from the previous "complete" response)
-    # ... (It will call plot_vascular_tree_pyvista for radius, flow, pressure plots of the FINAL graph)
-    # ... (Ensure it passes `config_for_viz_params=config` to plot_vascular_tree_pyvista)
-    logger.info("Generating final visualizations and quantitative analyses...")
-    masks_to_plot_for_pyvista: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = None
-    if plot_context_masks:
-        masks_to_plot_for_pyvista = {}
-        # Plot active tumor for final viz, not Tumor_Max_Extent unless specifically desired
-        mask_keys = ['domain_mask', 'GM', 'WM', 'CSF', 'Tumor'] # 'Tumor' here is the active one
-        for key in mask_keys:
-            if tissue_data.get(key) is not None and np.any(tissue_data[key]) and tissue_data.get('affine') is not None:
-                masks_to_plot_for_pyvista[key] = (tissue_data[key], tissue_data['affine'])
-        if not masks_to_plot_for_pyvista: masks_to_plot_for_pyvista = None
-    else: logger.info("Context mask plotting disabled for final visualizations.")
-
-    # GBO seeds are less relevant for final plot if tree exists, but tumor seed might be if small
-    # For simplicity, let's not replot GBO seeds here if a tree exists.
-    # Tumor seed sphere could be plotted if desired, using its initial config.
-
-    if vascular_graph and vascular_graph.number_of_nodes() > 0:
-        # ... (Saving VTP, quantitative analyses - as before) ...
-        final_tree_vtp_path = os.path.join(output_dir, "final_plot_vascular_tree.vtp")
-        io_utils.save_vascular_tree_vtp(vascular_graph, final_tree_vtp_path, radius_attr='radius', pressure_attr='pressure', flow_attr='flow_solver')
-        logger.info(f"Final vascular tree saved for analysis: {final_tree_vtp_path}")
-        analyze_radii_distribution(vascular_graph, output_dir)
-        analyze_segment_lengths(vascular_graph, output_dir)
-        analyze_bifurcation_geometry(vascular_graph, output_dir, murray_exponent=config_manager.get_param(config, "vascular_properties.murray_law_exponent", 3.0))
-        analyze_degree_distribution(vascular_graph, output_dir)
-        analyze_network_connectivity(vascular_graph, output_dir)
-        analyze_volumetric_densities(vascular_graph, tissue_data, output_dir)
-
-        if PYVISTA_AVAILABLE:
-            plot_suffix = "" if plot_context_masks else "_no_context"
-            # Radius Plot
-            pv_plot_title_radius = f"Final Vasculature (Radius, {vascular_graph.number_of_nodes()}N, {vascular_graph.number_of_edges()}E)"
-            pv_screenshot_path_radius = os.path.join(output_dir, f"final_vascular_tree_radius_3D{plot_suffix}.png")
-            plot_vascular_tree_pyvista(graph=vascular_graph, title=pv_plot_title_radius, output_screenshot_path=pv_screenshot_path_radius,
-                                       tissue_masks=masks_to_plot_for_pyvista, color_by_scalar='radius', config_for_viz_params=config)
-            # Flow Plot
-            if any('flow_solver' in data for _,_,data in vascular_graph.edges(data=True) if 'flow_solver' in data and np.any(np.isfinite(data['flow_solver']))):
-                pv_plot_title_flow = f"Final Vasculature (Edge Flow)"
-                pv_screenshot_path_flow = os.path.join(output_dir, f"final_vascular_tree_flow_3D{plot_suffix}.png")
-                plot_vascular_tree_pyvista(graph=vascular_graph, title=pv_plot_title_flow, output_screenshot_path=pv_screenshot_path_flow,
-                                           tissue_masks=masks_to_plot_for_pyvista, color_by_scalar='flow_solver', custom_cmap='coolwarm', 
-                                           scalar_bar_title_override="Flow (mm³/s)", config_for_viz_params=config)
-            # Pressure Plot
-            if any('pressure' in data for _,data in vascular_graph.nodes(data=True) if 'pressure' in data and np.any(np.isfinite(data['pressure']))):
-                pv_plot_title_pressure = f"Final Vasculature (Node Pressure)"
-                pv_screenshot_path_pressure = os.path.join(output_dir, f"final_vascular_tree_pressure_3D{plot_suffix}.png")
-                plot_vascular_tree_pyvista(graph=vascular_graph, title=pv_plot_title_pressure, output_screenshot_path=pv_screenshot_path_pressure,
-                                           tissue_masks=masks_to_plot_for_pyvista, color_by_scalar='pressure', custom_cmap='coolwarm', 
-                                           scalar_bar_title_override="Pressure (Pa)", config_for_viz_params=config)
-    # ... (rest of generate_final_visualizations)
-    logger.info("Final visualizations and analyses generation complete.")
-
-
-def generate_final_visualizations(
-    config: dict, output_dir: str, tissue_data: dict, vascular_graph: Optional[nx.DiGraph],
-    perfusion_map: Optional[np.ndarray] = None, pressure_map_tissue: Optional[np.ndarray] = None,
-    plot_context_masks: bool = True # New argument for controlling mask plotting
+    plot_context_masks: bool = True 
     ):
     logger.info("Generating final visualizations and quantitative analyses...")
     
     masks_to_plot_for_pyvista: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]]
     if plot_context_masks:
         masks_to_plot_for_pyvista = {}
-        if tissue_data.get('domain_mask') is not None and tissue_data.get('affine') is not None:
-            masks_to_plot_for_pyvista["domain_mask"] = (tissue_data['domain_mask'], tissue_data['affine'])
-        if tissue_data.get('GM') is not None and tissue_data.get('affine') is not None:
-            masks_to_plot_for_pyvista["GM"] = (tissue_data['GM'], tissue_data['affine'])
-        if tissue_data.get('WM') is not None and tissue_data.get('affine') is not None:
-            masks_to_plot_for_pyvista["WM"] = (tissue_data['WM'], tissue_data['affine'])
-        if tissue_data.get('Tumor') is not None and tissue_data.get('affine') is not None:
-            masks_to_plot_for_pyvista["Tumor"] = (tissue_data['Tumor'], tissue_data['affine'])
-        if not masks_to_plot_for_pyvista: # If dict is still empty
+        mask_keys = ['domain_mask', 'GM', 'WM', 'CSF', 'Tumor'] 
+        for key in mask_keys:
+            if tissue_data.get(key) is not None and np.any(tissue_data[key]) and tissue_data.get('affine') is not None:
+                masks_to_plot_for_pyvista[key] = (tissue_data[key], tissue_data['affine'])
+        if not masks_to_plot_for_pyvista: 
             logger.info("No valid masks found in tissue_data to plot for context.")
-            masks_to_plot_for_pyvista = None # Explicitly set to None
+            masks_to_plot_for_pyvista = None 
     else:
         logger.info("Context mask plotting is disabled for this visualization call.")
         masks_to_plot_for_pyvista = None
-
-
-    seed_points_viz_data: List[Tuple[np.ndarray, float, str]] = []
-    config_seeds = config_manager.get_param(config, "gbo_growth.seed_points", [])
-    if config_seeds and isinstance(config_seeds, list):
-        for i, seed_info in enumerate(config_seeds):
-            if isinstance(seed_info, dict) and 'position' in seed_info:
-                seed_points_viz_data.append((np.array(seed_info.get('position')),
-                                             float(seed_info.get('initial_radius',0.1)),
-                                             seed_info.get('id',f"S_{i}")))
-            else: logger.warning(f"Skipping invalid seed_info in config: {seed_info}")
 
     if vascular_graph and vascular_graph.number_of_nodes() > 0:
         final_tree_vtp_path = os.path.join(output_dir, "final_plot_vascular_tree.vtp")
@@ -625,43 +521,49 @@ def generate_final_visualizations(
         analyze_network_connectivity(vascular_graph, output_dir)
         analyze_volumetric_densities(vascular_graph, tissue_data, output_dir)
 
-        # Plotting with Radius (always try this if graph exists)
         pv_plot_title_radius = f"Vasculature (Radius, {vascular_graph.number_of_nodes()}N, {vascular_graph.number_of_edges()}E)"
         pv_screenshot_path_radius = os.path.join(output_dir, f"final_vascular_tree_radius_3D{'' if plot_context_masks else '_no_context'}.png")
         if PYVISTA_AVAILABLE:
-            plot_vascular_tree_pyvista(
+            plot_vascular_tree_pyvista( # REMOVED seed_points_world
                 graph=vascular_graph, title=pv_plot_title_radius, output_screenshot_path=pv_screenshot_path_radius,
-                tissue_masks=masks_to_plot_for_pyvista, seed_points_world=seed_points_viz_data,
-                color_by_scalar='radius', custom_cmap=config_manager.get_param(config, "visualization.pyvista_cmap_radius", "viridis")
+                tissue_masks=masks_to_plot_for_pyvista, 
+                initial_tumor_seed_info=None, # Tumor seed less relevant for final unless specifically requested
+                color_by_scalar='radius', 
+                custom_cmap=config_manager.get_param(config, "visualization.pyvista_cmap_radius", "viridis"),
+                config_for_viz_params=config
             )
 
-            # Plotting with Flow
             if any('flow_solver' in data for _,_,data in vascular_graph.edges(data=True) if 'flow_solver' in data and np.any(np.isfinite(data['flow_solver']))):
                 pv_plot_title_flow = f"Vasculature (Edge Flow, {vascular_graph.number_of_nodes()}N, {vascular_graph.number_of_edges()}E)"
                 pv_screenshot_path_flow = os.path.join(output_dir, f"final_vascular_tree_flow_3D{'' if plot_context_masks else '_no_context'}.png")
-                plot_vascular_tree_pyvista(
+                plot_vascular_tree_pyvista( # REMOVED seed_points_world
                     graph=vascular_graph, title=pv_plot_title_flow, output_screenshot_path=pv_screenshot_path_flow,
-                    tissue_masks=masks_to_plot_for_pyvista, seed_points_world=seed_points_viz_data,
-                    color_by_scalar='flow_solver', custom_cmap='coolwarm', scalar_bar_title_override="Flow (mm³/s)"
+                    tissue_masks=masks_to_plot_for_pyvista, 
+                    initial_tumor_seed_info=None,
+                    color_by_scalar='flow_solver', custom_cmap='coolwarm', scalar_bar_title_override="Flow (mm³/s)",
+                    config_for_viz_params=config
                 )
             else: logger.info("Skipping flow plot: No valid 'flow_solver' data on edges.")
 
-            # Plotting with Pressure
             if any('pressure' in data for _,data in vascular_graph.nodes(data=True) if 'pressure' in data and np.any(np.isfinite(data['pressure']))):
                 pv_plot_title_pressure = f"Vasculature (Node Pressure, {vascular_graph.number_of_nodes()}N, {vascular_graph.number_of_edges()}E)"
                 pv_screenshot_path_pressure = os.path.join(output_dir, f"final_vascular_tree_pressure_3D{'' if plot_context_masks else '_no_context'}.png")
-                plot_vascular_tree_pyvista(
+                plot_vascular_tree_pyvista( # REMOVED seed_points_world
                     graph=vascular_graph, title=pv_plot_title_pressure, output_screenshot_path=pv_screenshot_path_pressure,
-                    tissue_masks=masks_to_plot_for_pyvista, seed_points_world=seed_points_viz_data,
-                    color_by_scalar='pressure', custom_cmap='coolwarm', scalar_bar_title_override="Pressure (Pa)"
+                    tissue_masks=masks_to_plot_for_pyvista, 
+                    initial_tumor_seed_info=None,
+                    color_by_scalar='pressure', custom_cmap='coolwarm', scalar_bar_title_override="Pressure (Pa)",
+                    config_for_viz_params=config
                 )
             else: logger.info("Skipping pressure plot: No valid 'pressure' data on nodes.")
         else: logger.warning("PyVista not available, skipping 3D plots.")
-    else: # No valid vascular_graph
+    else: 
         logger.warning("Vascular graph is empty or None. Skipping VTP save and quantitative analyses.")
         if PYVISTA_AVAILABLE:
-            plot_vascular_tree_pyvista(None, title=f"Tissue Context & Seeds (No Vasculature){' (No Context Masks)' if not plot_context_masks else ''}",
+            plot_vascular_tree_pyvista(None, title=f"Tissue Context (No Vasculature){' (No Context Masks)' if not plot_context_masks else ''}",
                                        output_screenshot_path=os.path.join(output_dir, f"context_only_plot{'' if plot_context_masks else '_no_context'}.png"),
-                                       tissue_masks=masks_to_plot_for_pyvista, seed_points_world=seed_points_viz_data)
-
+                                       tissue_masks=masks_to_plot_for_pyvista, 
+                                       initial_tumor_seed_info=None, # No GBO seeds here
+                                       config_for_viz_params=config
+                                       )
     logger.info("Final visualizations and analyses generation complete.")
