@@ -61,7 +61,7 @@ vascular_properties:
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   gbo_growth.enabled: true # Master switch for GBO growth
-  max_iterations: 50
+  max_iterations: 4
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -110,6 +110,13 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
     min_flow_improvement: 1.0e-8 # Stop if total perfused flow doesn't improve significantly
     min_radius_for_growth: 0.005 # mm, stop growing branches if they become too small
   
+  perfusion_driven_behavior:
+    enabled: True # Set to True to enable this new logic
+    min_territory_perfusion_ratio: 0.7 # Terminal must meet this % of its demand to seek new frontiers
+    # Parameters for sub-branching if poorly perfused (optional, more advanced)
+    sub_branching_if_hypoxic: False 
+    min_radius_for_hypoxic_sub_branching: 0.05 # mm, if terminal is larger than this, it can try to sub-branch
+
   seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
   -   id: seed_1
       position:
@@ -291,9 +298,7 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
       - 10.769
       - 87.304
       initial_radius: 2.63
-perfusion_solver:
-  inlet:pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
-  terminal_outlet_pressure: 2000 # Pa (approx 15 mmHg)
+
 
 tumor_angiogenesis:
   enabled: true  # Master switch for this entire module
@@ -367,6 +372,7 @@ tumor_angiogenesis:
   save_intermediate_interval_macro_iters: 1 # How many macro iterations between saving VTPs and NIfTIs
                                             # Set to 0 or a very large number to disable intermediate saves.
 perfusion_solver:
+  
   enabled: false # Set to true to run perfusion modeling after vascular growth
   # For 1D network flow solver
   inlet_pressure: 10000 # Pa (approx 75 mmHg) at arterial roots
@@ -383,7 +389,8 @@ perfusion_solver:
   coupling_beta: 1.0e-7 # mm^3 / (s*Pa) (if units are mm, s, Pa)
   max_iterations_coupling: 50
   convergence_tolerance_coupling: 1.0e-4 # Relative change in flow/pressure
-
+  run_final_1d_flow_solve: false
+  
 visualization:
   save_initial_masks: true
   save_intermediate_steps: false # If true, save tree/maps at certain GBO iterations
@@ -402,4 +409,4 @@ visualization:
   tumor_seed_marker_color: "magenta" 
   tumor_max_extent_mask_color: "salmon"
   active_tumor_mask_color: "darkred"   # For visualizing the active tumor in final plots
-  snapshot_iteration_for_blender: 3
+  blender_snapshot_interval: 2
