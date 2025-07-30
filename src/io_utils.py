@@ -152,7 +152,7 @@ def load_arterial_centerlines_txt(filepath: str, radius_default: float = 0.1) ->
 
 
 def save_vascular_tree_vtp(graph: nx.DiGraph, filepath: str,
-                           pos_attr='pos', radius_attr='radius', pressure_attr='pressure', flow_attr='flow'):
+                           pos_attr='pos', radius_attr='radius', pressure_attr='pressure', flow_attr='flow_solver'):
     """
     Saves a vascular tree (NetworkX graph) to a VTP file.
     Nodes store positions and radii. Edges define connectivity.
@@ -363,3 +363,81 @@ if __name__ == '__main__':
     import shutil
     shutil.rmtree(test_data_dir)
     print(f"\nCleaned up temporary test directory: {test_data_dir}")
+
+def export_tissue_masks_to_vtk(tissue_data: dict, perfused_mask: np.ndarray, output_dir: str, iteration: int = -1):
+    """
+    Exports tissue masks as VTK files for ParaView visualization.
+    
+    Args:
+        tissue_data: Dictionary containing tissue masks and affine
+        perfused_mask: Current perfusion state
+        output_dir: Output directory
+        iteration: Current iteration number (-1 for final)
+    """
+    try:
+        import vtk
+        from vtk.util import numpy_support
+    except ImportError:
+        logger.warning("VTK not available. Cannot export tissue masks for ParaView.")
+        return
+    
+    affine = tissue_data.get('affine')
+    if affine is None:
+        logger.error("Cannot export tissue masks: affine matrix missing")
+        return
+    
+    # Create subdirectory for VTK files
+    vtk_dir = os.path.join(output_dir, "tissue_vtk")
+    os.makedirs(vtk_dir, exist_ok=True)
+    
+    # Determine file suffix
+    suffix = f"_iter_{iteration}" if iteration >= 0 else "_final"
+    
+    # List of masks to export
+    masks_to_export = {
+        'perfused': perfused_mask,
+        'GM': tissue_data.get('GM'),
+        'WM': tissue_data.get('WM'),
+        'domain_mask': tissue_data.get('domain_mask'),
+        'metabolic_demand': tissue_data.get('metabolic_demand_map')
+    }
+    
+    # Get voxel spacing from affine
+    spacing = np.abs(np.diag(affine)[:3])
+    origin = affine[:3, 3]
+    
+    for mask_name, mask_data in masks_to_export.items():
+        if mask_data is None or (isinstance(mask_data, np.ndarray) and not np.any(mask_data)):
+            continue
+            
+        # Create VTK image data
+        image_data = vtk.vtkImageData()
+        image_data.SetDimensions(mask_data.shape)
+        image_data.SetSpacing(spacing)
+        image_data.SetOrigin(origin)
+        
+        # Convert numpy array to VTK array
+        if mask_data.dtype == bool:
+            vtk_data = numpy_support.numpy_to_vtk(
+                mask_data.astype(np.uint8).ravel(order='F'), 
+                deep=True, 
+                array_type=vtk.VTK_UNSIGNED_CHAR
+            )
+        else:
+            vtk_data = numpy_support.numpy_to_vtk(
+                mask_data.astype(np.float32).ravel(order='F'), 
+                deep=True, 
+                array_type=vtk.VTK_FLOAT
+            )
+        
+        vtk_data.SetName(mask_name)
+        image_data.GetPointData().SetScalars(vtk_data)
+        
+        # Write to file
+        writer = vtk.vtkXMLImageDataWriter()
+        filename = os.path.join(vtk_dir, f"{mask_name}{suffix}.vti")
+        writer.SetFileName(filename)
+        writer.SetInputData(image_data)
+        writer.Write()
+        
+        logger.info(f"Exported {mask_name} to {filename}")

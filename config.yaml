@@ -3,7 +3,7 @@ paths:
   output_dir: "output/simulation_results" # Base directory for outputs
   # Input NIfTI files for tissue segmentation
   wm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_wm_mask_reoriented_RAS.nii.gz"
-  gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_gm_mask_reoriented_RAS.nii"
+  gm_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_gm_mask_reoriented_RAS.nii.gz"
   csf_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/other_reoriented_masks_TARGET_RAS/mida_total_csf_mask_reoriented_RAS.nii.gz" # Optional
   tumor_nifti: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/mida_processed_masks/tumour_mask.nii.gz" # Optional, for angiogenesis simulation
   inspection_dir: "data/inspection" # Directory for saving inspection plots
@@ -52,7 +52,9 @@ vascular_properties:
   initial_terminal_flow: 1.0e-4 # e.g., mm^3/s
   # Minimum and maximum geometric constraints for synthetic vessels
   min_segment_length: 0.1 # mm
-  max_segment_length: 3 # mm
+  max_segment_length: 2 # mm
+  create_intermediate_nodes: true
+  intermediate_node_spacing: 0.5
   min_radius: 0.004 # mm (e.g. 5 microns, capillary scale)
   # Relationship: r_i = K_murray * Q_i^(1/murray_law_exponent)
   # K_murray can be derived or set. For now, let's assume it's implicitly handled by radius updates
@@ -61,7 +63,7 @@ vascular_properties:
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   gbo_growth.enabled: true # Master switch for GBO growth
-  max_iterations: 4
+  max_iterations: 8
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -74,12 +76,26 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   initial_territory_radius: 3.0 
 
   frontier_search_radius_factor: 3.0 # Multiplies terminal radius
-  frontier_search_radius_fixed: 8  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
-  max_voxels_for_Rip: 3000             # Max voxels in a new frontier patch (was 30-50)
-  max_flow_single_terminal: 0.004  # mm^3/s (Max flow before forcing branch. Was 0.0005)
+  frontier_search_radius_fixed: 6  # mm (Fixed search distance, must be > initial_territory_radius to find new tissue)
+  
+  max_move_per_iteration: 3.5  # Maximum mm a terminal can move per iteration
+  territory_assignment_inertia: 0.5  # 0-1, higher = more stable territories (0.5 = 50% "stickiness")
+  
+  max_voxels_for_Rip: 4000             # Max voxels in a new frontier patch (was 30-50)
+  max_flow_single_terminal: 0.001  # mm^3/s (Max flow before forcing branch. Was 0.0005)
   # Fraction of total metabolic demand that the GBO aims to satisfy.
   target_perfusion_level: 0.95
   target_domain_perfusion_fraction: 0.95
+  # Smooth growth
+  direction_memory_factor: 0.3  # How much to blend previous direction (0-1)
+  tortuosity_noise_factor: 0.15  # Random perturbation strength (0-0.5)
+  # Intermediate nodes for tortuosity
+  create_intermediate_nodes: true
+  intermediate_node_spacing: 1.5
+  
+  tissue_constraints:
+    avoid_csf: true  # Vessels avoid CSF regions
+    tissue_stiffness_effect: false  # Future: growth affected by tissue properties
 
   pruning:
     enabled: True
@@ -90,17 +106,17 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   # Criteria for triggering a bifurcation attempt for a terminal
   branching_trigger_radius_factor: 5 # Branch if current radius > factor * radius_at_last_branch (or initial)
   branching_trigger_territory_voxels: 500 # Branch if territory size (num voxels) exceeds this
-  branch_radius_increase_threshold: 1.1
+  branch_radius_increase_threshold: 1.5 # Branch if radius increases by this factor since last bifurcation
   min_iterations_before_no_growth_stop: 5
   gbo_growth.min_frontier_demand_factor_for_bifurcation: 0.1
-  flow_solver_interval: 1     # Run flow solver every 1 GBO iteration. Increase to e.g. 5 or 10 for speed if needed later.
+  flow_solver_interval: 20     # Run flow solver every 1 GBO iteration. Increase to e.g. 5 or 10 for speed if needed later.
 
   # Parameters for searching for optimal bifurcation
   bifurcation_candidate_points: 10 # Number of candidate locations for new child terminals
   bifurcation_angle_min_deg: 30.0  # Minimum angle between child branches
   bifurcation_angle_max_deg: 120.0 # Maximum angle between child branches
   bifurcation_length_factor_parent_radius: 10.0 # New segment length as factor of parent radius ( heuristic for new terminal placement)
-
+  bifurcation_max_child_distance: 2.5 # NEW: Max distance (mm) a new child can be from its parent
   # Stop conditions for GBO growth
   stop_criteria:
     # For a branch originating from a measured artery terminal:
@@ -361,7 +377,7 @@ tumor_angiogenesis:
     max_dist_to_midpoint_factor: 2.0 # Tip's distance to target segment's midpoint <= tip_radius * this_factor
 
   # --- Flow Solver and Radius Adaptation during Angiogenesis ---
-  flow_solve_interval_macro_iters: 5 # How many macro iterations between running the full 1D flow solver
+  flow_solve_interval_macro_iters: 20 # How many macro iterations between running the full 1D flow solver
   min_tumor_terminal_demand: 1.0e-5  # Default Q_flow (mm^3/s) for new angiogenic terminals if more detailed demand isn't calculated
 
   adaptation: # Rules for how tumor vessel radii change after flow solve
@@ -390,7 +406,7 @@ perfusion_solver:
   max_iterations_coupling: 50
   convergence_tolerance_coupling: 1.0e-4 # Relative change in flow/pressure
   run_final_1d_flow_solve: false
-  
+
 visualization:
   save_initial_masks: true
   save_intermediate_steps: false # If true, save tree/maps at certain GBO iterations
@@ -409,4 +425,5 @@ visualization:
   tumor_seed_marker_color: "magenta" 
   tumor_max_extent_mask_color: "salmon"
   active_tumor_mask_color: "darkred"   # For visualizing the active tumor in final plots
-  blender_snapshot_interval: 2
+  blender_snapshot_interval: 1
+  export_tissue_vtk: true
