@@ -17,8 +17,8 @@ DEFAULT_BLOOD_VISCOSITY = 3.5e-3  # Pa.s
 # Example: GM 60 ml/min/100g = 60 ml/min/100ml = 1 ml/min/ml_tissue = (1/60) ml/s/ml_tissue ~= 0.0167 s^-1
 Q_MET_GM_PER_ML = 0.0167  # 1/s (equivalent to ml_blood / s / ml_tissue)
 Q_MET_WM_PER_ML = 0.0056  # 1/s (approx 20-25 ml/min/100g)
-Q_MET_TUMOR_RIM_PER_ML = 0.0334 # 1/s (e.g., 2x GM)
-Q_MET_TUMOR_CORE_PER_ML = 0.0083 # 1/s (can be lower due to necrosis)
+Q_MET_TUMOR_RIM_PER_ML = 0.0434 # 1/s (matches config.yaml tumor_rim rate)
+Q_MET_TUMOR_CORE_PER_ML = 0.003 # 1/s (matches config.yaml tumor_core rate)
 Q_MET_CSF_PER_ML = 0.0 # No metabolic demand for CSF
 
 # GBO Parameters
@@ -30,11 +30,11 @@ MURRAY_LAW_EXPONENT = 3.0 # For r_parent^gamma = sum(r_child_i^gamma)
 # E_metabolic should also be in units of Power.
 # C_met * PI * r^2 * L => C_met units = Power / Length^3 = Power / Volume
 # (e.g., W/m^3). This represents volumetric metabolic power density of vessel wall.
-DEFAULT_C_MET_VESSEL_WALL = 1.0e5 # W/m^3 (Placeholder value, needs calibration from literature)
+DEFAULT_C_MET_VESSEL_WALL = 1.0e-1 # mW/mm^3 (matches config.yaml energy_coefficient_C_met_vessel_wall)
 
 # Initial small flow for new terminals to seed Voronoi calculation (e.g., mm^3/s or m^3/s)
 # Must be > 0. Let's use mm^3/s if coordinates are in mm.
-INITIAL_TERMINAL_FLOW_Q = 1e-6 # mm^3/s (if using mm)
+INITIAL_TERMINAL_FLOW_Q = 1.0e-4 # mm^3/s (matches config.yaml initial_terminal_flow)
 
 # Perfusion Model Parameters
 # Tissue permeability K (e.g., in mm^2 or m^2). This is for Darcy's Law: v = -(K/mu) * grad(P)
@@ -53,5 +53,4 @@ DEFAULT_VOXEL_SIZE_MM = 1.0 # Default isotropic voxel size in mm, if not from NI
 EPSILON = 1e-9
 
 
-MIN_VESSEL_RADIUS_MM = 0.005 # example, 5 microns in mm
-INITIAL_TERMINAL_FLOW_Q = 1e-6 # mm^3/s
+MIN_VESSEL_RADIUS_MM = 0.004 # mm (4 microns, matches config.yaml min_radius)

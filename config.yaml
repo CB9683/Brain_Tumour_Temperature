@@ -10,10 +10,10 @@ paths:
   # Input arterial centerlines (VTP or TXT)
   # These define roots and terminals of measured vasculature.
   # Synthetic vessels sprout from these terminal points.
-  # arterial_centerlines: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_NETWORK_v1/mida_arteries_mask_centerlines_TARGET_RAS/centerline_NETWORK_world.vtp" # "data/sample_arteries.vtp"
+  # arterial_centerlines: "/Users/c3495249/Coding/Gemini_Pro_Vasculature/data/mida_reoriented_processing_v2/mida_arteries_mask_centerlines_TARGET_RAS/terminals_world.txt"
 
 simulation:
-  simulation_name: "mida_gbo_seeds" # Used for naming output subfolder
+  simulation_name: "mida_terminals_gbo" # Used for naming output subfolder
   random_seed: 42
   log_level: "INFO" # DEBUG, INFO, WARNING, ERROR
   units:
@@ -48,6 +48,7 @@ vascular_properties:
   blood_viscosity: 0.0035 # Pa.s (3.5 cP)
   murray_law_exponent: 3
   k_murray_scaling_factor: 0.5
+  external_outlet_default_flow: 0.001 # Add missing parameter
   # Initial flow for newly sprouted synthetic terminals before their territory is defined
   initial_terminal_flow: 1.0e-4 # e.g., mm^3/s
   # Minimum and maximum geometric constraints for synthetic vessels
@@ -63,7 +64,7 @@ vascular_properties:
 
 gbo_growth: # Parameters for the Growth-Based Optimization algorithm
   gbo_growth.enabled: true # Master switch for GBO growth
-  max_iterations: 8
+  max_iterations: 5
   # Cost of metabolic maintenance of vessel wall volume (Power / Volume, e.g. W/m^3 or equivalent)
   # E_metabolic = C_met_vessel_wall * PI * r^2 * L (This should have units of Power)
   # If length in mm, radius in mm, C_met in (mW / mm^3), then E_metabolic in mW.
@@ -133,187 +134,22 @@ gbo_growth: # Parameters for the Growth-Based Optimization algorithm
     sub_branching_if_hypoxic: False 
     min_radius_for_hypoxic_sub_branching: 0.05 # mm, if terminal is larger than this, it can try to sub-branch
 
-  seed_points: # Optional: Define seed points if no initial_arterial_centerlines are provided
-  -   id: seed_1
-      position:
-      - -1.336
-      - -21.616
-      - 25.53
-      initial_radius: 1.744
-  -   id: seed_2
-      position:
-      - -0.835
-      - -34.575
-      - -14.099
-      initial_radius: 0.34
-  -   id: seed_3
-      position:
-      - 27.259
-      - -22.535
-      - 80.565
-      initial_radius: 0.728
-  -   id: seed_4
-      position:
-      - 60.204
-      - 1.552
-      - 7.573
-      initial_radius: 0.711
-  -   id: seed_5
-      position:
-      - -25.138
-      - 29.939
-      - 17.637
-      initial_radius: 1.325
-  -   id: seed_6
-      position:
-      - -52.483
-      - 29.913
-      - 19.984
-      initial_radius: 0.423
-  -   id: seed_7
-      position:
-      - -41.835
-      - -49.993
-      - 38.268
-      initial_radius: 1.662
-  -   id: seed_8
-      position:
-      - 47.39
-      - 31.298
-      - 25.961
-      initial_radius: 1.026
-  -   id: seed_9
-      position:
-      - 20.273
-      - 82.097
-      - 61.83
-      initial_radius: 0.569
-  -   id: seed_10
-      position:
-      - 14.323
-      - 96.054
-      - 39.681
-      initial_radius: 0.913
-  -   id: seed_11
-      position:
-      - -36.326
-      - 33.97
-      - -2.79
-      initial_radius: 1.089
-  -   id: seed_12
-      position:
-      - -41.492
-      - 31.401
-      - 18.071
-      initial_radius: 1.312
-  -   id: seed_13
-      position:
-      - 46.352
-      - -27.972
-      - 38.362
-      initial_radius: 1.836
-  -   id: seed_14
-      position:
-      - -9.287
-      - -39.228
-      - 75.913
-      initial_radius: 1.814
-  -   id: seed_15
-      position:
-      - 1.611
-      - 61.082
-      - 14.944
-      initial_radius: 0.813
-  -   id: seed_16
-      position:
-      - 23.288
-      - -8.593
-      - 5.379
-      initial_radius: 1.195
-  -   id: seed_17
-      position:
-      - -47.027
-      - -20.983
-      - 34.246
-      initial_radius: 0.338
-  -   id: seed_18
-      position:
-      - 58.801
-      - 26.163
-      - 41.944
-      initial_radius: 0.249
-  -   id: seed_19
-      position:
-      - -62.924
-      - -12.712
-      - 24.78
-      initial_radius: 0.824
-  -   id: seed_20
-      position:
-      - 6.121
-      - 20.759
-      - 47.749
-      initial_radius: 1.687
-  -   id: seed_21
-      position:
-      - -9.228
-      - 73.155
-      - 37.469
-      initial_radius: 1.674
-  -   id: seed_22
-      position:
-      - 2.72
-      - 30.778
-      - 29.681
-      initial_radius: 0.23
-  -   id: seed_23
-      position:
-      - -36.904
-      - 63.778
-      - 53.533
-      initial_radius: 1.279
-  -   id: seed_24
-      position:
-      - 16.423
-      - 2.868
-      - 80.927
-      initial_radius: 1.655
-  -   id: seed_25
-      position:
-      - 46.176
-      - 39.696
-      - 18.071
-      initial_radius: 1.266
-  -   id: seed_26
-      position:
-      - 2.248
-      - 28.588
-      - 31.66
-      initial_radius: 1.791
-  -   id: seed_27
-      position:
-      - 17.449
-      - 8.197
-      - 89.397
-      initial_radius: 0.979
-  -   id: seed_28
-      position:
-      - 43.137
-      - 38.266
-      - 61.13
-      initial_radius: 0.325
-  -   id: seed_29
-      position:
-      - 8.143
-      - -44.423
-      - 43.03
-      initial_radius: 1.102
-  -   id: seed_30
-      position:
-      - -15.072
-      - 10.769
-      - 87.304
-      initial_radius: 2.63
+  seed_points: # Use arterial terminal coordinates as seed points for GBO growth
+  - id: outlet_1
+    position: [-60.125883, -11.242233, 40.874130]
+    initial_radius: 0.499972
+  - id: outlet_2
+    position: [-60.743472, 18.609706, 35.421612]
+    initial_radius: 0.499972
+  - id: outlet_3
+    position: [-54.227628, 5.751337, 46.633032]
+    initial_radius: 0.499972
+  - id: outlet_4
+    position: [-54.325691, 23.558485, 39.551682]
+    initial_radius: 0.499972
+  - id: outlet_5
+    position: [-46.005830, -29.378987, 47.497986]
+    initial_radius: 0.499972
 
 
 tumor_angiogenesis:
