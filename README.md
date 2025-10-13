@@ -92,7 +92,7 @@ The simulation can be conceptualized as two main phases, which can be run sequen
     *   `plot_vascular_tree_pyvista()`: A powerful function that creates 3D renderings of the vascular network and can overlay tissue masks. Vessels can be colored by various properties (radius, pressure, flow).
     *   `analyze_*` functions: A suite of functions that calculate and plot key network metrics, essential for validating the simulation results (e.g., `analyze_bifurcation_geometry` checks for Murray's Law compliance).
 
-## 🚀 Usage
+##  Usage
 
 1.  **Setup Environment:**
     ```bash

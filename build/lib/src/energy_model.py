@@ -178,6 +178,17 @@ def find_optimal_bifurcation_for_combined_territory(
                 indices = np.random.choice(len(combined_voxels_world_coords), 2, replace=False)
                 c1_pos_candidate = combined_voxels_world_coords[indices[0]]
                 c2_pos_candidate = combined_voxels_world_coords[indices[1]]
+
+                # <<<<<<<<<<<<<<< ADD THE FOLLOWING CODE BLOCK >>>>>>>>>>>>>>>>>
+                # NEW: Add a constraint on the maximum distance for new child segments
+                max_child_dist = config_manager.get_param(config, "gbo_growth.bifurcation_max_child_distance", 2.5)
+
+                if utils.distance(parent_pos, c1_pos_candidate) > max_child_dist or \
+                utils.distance(parent_pos, c2_pos_candidate) > max_child_dist:
+                    # logger.debug(f"Candidate children too far from parent {parent_id}. Skipping.")
+                    continue # Skip this candidate pair and try the next one
+                # <<<<<<<<<<<<<<<<<<<<<< END OF NEW BLOCK >>>>>>>>>>>>>>>>>>>>>>
+        
         else:
             if i == 0 and not SKLEARN_AVAILABLE : logger.warning("Sklearn KMeans not available for child placement.")
             indices = np.random.choice(len(combined_voxels_world_coords), 2, replace=False)

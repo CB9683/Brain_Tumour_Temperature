@@ -645,6 +645,10 @@ def grow_healthy_vasculature(config: dict,
             if ((iteration + 1) % interval == 0) or stop_target or stop_no_active or stop_stalled or (iteration == max_iterations - 1):
                 io_utils.save_vascular_tree_vtp(gbo_graph, os.path.join(output_dir, f"gbo_graph_iter_{iteration+1}.vtp"))
                 io_utils.save_nifti_image(perfused_tissue_mask.astype(np.uint8), tissue_data['affine'], os.path.join(output_dir, f"perfused_mask_iter_{iteration+1}.nii.gz"))
+                
+                # Export tissue masks and perfused areas as VTK for ParaView visualization
+                if config_manager.get_param(config, "visualization.export_tissue_vtk", False):
+                    io_utils.export_tissue_masks_to_vtk(tissue_data, perfused_tissue_mask, output_dir, iteration=iteration+1)
 
         if stop_target: logger.info(f"GBO Stopping at iter {iteration+1}: Target perfusion reached."); break
         if stop_no_active: logger.info(f"GBO Stopping at iter {iteration+1}: No active terminals."); break

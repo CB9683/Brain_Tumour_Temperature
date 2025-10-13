@@ -2,6 +2,50 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Environment Setup
+
+**IMPORTANT**: This project requires a specific conda environment to run properly.
+
+### Conda Environment
+- **Environment Path**: `/Users/c3495249/miniconda3/envs/thermo311`
+- **Activation Command**: `conda activate /Users/c3495249/miniconda3/envs/thermo311`
+
+**Always activate this environment before running any simulations or Python commands.**
+
+### Running Simulations
+```bash
+# Activate the conda environment first
+conda activate /Users/c3495249/miniconda3/envs/thermo311
+
+# Then run the main simulation
+python3 main.py
+```
+
+### Coordinate System and Visualization
+
+**Important**: The project uses RAS (Right-Anterior-Superior) medical coordinates internally but applies coordinate transformations for visualization tools:
+
+- **ParaView VTK files**: Automatically transformed using RAS-to-Blender transformation (X→X, Y→-Z, Z→Y)
+- **Blender import**: Uses same transformation matrix for consistent alignment
+- **This ensures measured vessels and synthetic vessels align properly in both ParaView and Blender**
+
+The transformation is applied by default in both:
+- `save_vascular_tree_vtp()` for vessel networks (can be disabled with `apply_coordinate_transform=False`)
+- `export_tissue_masks_to_vtk()` for tissue masks (can be disabled with `apply_coordinate_transform=False`)
+
+### ParaView Visualization Tips
+
+**VTK File Display Issues - SOLVED:**
+- If VTK (.vti) files show only wireframe cubes instead of actual data, this was due to incorrect memory layout in VTK export
+- **Fixed**: VTK export now uses point-by-point data filling with `SetScalarComponentFromDouble()` for correct memory layout
+- **Volume rendering**: Should work directly after loading VTK files
+- **Surface rendering**: Use Contour filter with value 0.5 for binary masks (GM, WM, perfused areas)
+
+**Coordinate Alignment:**
+- Vessel (.vtp) and tissue (.vti) files use identical RAS-to-Blender transformation
+- Load both file types in same ParaView session for perfect alignment
+- Vessel terminals should align with tissue mask boundaries
+
 ## Project Overview
 
 This is a sophisticated Python framework for simulating vascular network growth and perfusion in biological tissue, with specialized support for modeling tumor-induced angiogenesis. The simulation implements physics-based algorithms for healthy vasculature development using Geometry-Based Optimization (GBO) and tumor angiogenesis modeling with VEGF guidance.
@@ -90,9 +134,15 @@ The `config.yaml` file controls all simulation parameters:
 
 Simulations create timestamped directories in `output/simulation_results/` containing:
 - **VTP files**: 3D vessel networks for ParaView visualization
+- **VTI files**: Tissue masks and perfused areas in `tissue_vtk/` subdirectory (ParaView-compatible)
 - **NIfTI files**: Tissue masks, perfusion maps, intermediate states
 - **Analysis plots**: Vessel radius distributions, Murray's law compliance, branching angles
 - **Logs**: Detailed simulation progress and debugging information
+
+**VTK Export Configuration:**
+- Enable with `visualization.export_tissue_vtk: true` in config.yaml
+- Generates tissue masks (GM, WM, CSF, perfused areas) as .vti files
+- Coordinate transformation applied by default for alignment with vessel data
 
 ### Development Notes
 

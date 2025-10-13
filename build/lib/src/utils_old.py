@@ -4,7 +4,7 @@ import random
 import logging
 import os
 import shutil
-from typing import Tuple, Optional
+from typing import Tuple 
 
 logger = logging.getLogger(__name__)
 
@@ -196,23 +196,3 @@ if __name__ == '__main__':
     print(f"Path2: {path2}")
     shutil.rmtree(base_output)
     print("Cleaned up temp_test_output directory.")
-
-def get_random_point_in_mask(mask: np.ndarray, affine: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Gets a random point within a boolean mask in world coordinates.
-    
-    Args:
-        mask: Boolean 3D array
-        affine: 4x4 affine matrix
-        
-    Returns:
-        Random world coordinate point within mask, or None if mask is empty
-    """
-    indices = np.array(np.where(mask)).T
-    if indices.shape[0] == 0:
-        return None
-    
-    random_idx = np.random.choice(indices.shape[0])
-    voxel_coord = indices[random_idx]
-    world_coord = voxel_to_world(voxel_coord, affine)[0]
-    return world_coord

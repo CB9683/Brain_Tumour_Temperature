@@ -152,11 +152,33 @@ def load_arterial_centerlines_txt(filepath: str, radius_default: float = 0.1) ->
 
 
 def save_vascular_tree_vtp(graph: nx.DiGraph, filepath: str,
-                           pos_attr='pos', radius_attr='radius', pressure_attr='pressure', flow_attr='flow_solver'):
+                           pos_attr='pos', radius_attr='radius', pressure_attr='pressure', flow_attr='flow_solver',
+                           apply_coordinate_transform=True):
     """
     Saves a vascular tree (NetworkX graph) to a VTP file.
     Nodes store positions and radii. Edges define connectivity.
+    
+    Args:
+        graph: NetworkX DiGraph containing vessel network
+        filepath: Output VTP file path
+        pos_attr: Node attribute containing 3D position
+        radius_attr: Node attribute containing vessel radius
+        pressure_attr: Node attribute containing pressure data
+        flow_attr: Edge attribute containing flow data
+        apply_coordinate_transform: If True, applies RAS-to-Blender coordinate transformation
     """
+    # RAS-to-Blender coordinate transformation matrix (same as used in Blender import)
+    # This ensures consistent coordinate system between ParaView and Blender
+    def transform_coordinate(pos):
+        if not apply_coordinate_transform:
+            return pos
+        x, y, z = pos
+        # Apply transformation: X stays X, Y->-Z, Z->Y
+        return [x, -z, y]
+    
+    if apply_coordinate_transform:
+        logger.info(f"Applying RAS-to-Blender coordinate transformation for VTP export: {filepath}")
+    
     points = []
     point_radii = []
     point_pressures = []
@@ -169,7 +191,12 @@ def save_vascular_tree_vtp(graph: nx.DiGraph, filepath: str,
         if pos_attr not in data:
             logger.warning(f"Node {node_id} missing '{pos_attr}' attribute. Skipping for point data.")
             continue
-        points.append(data[pos_attr])
+        
+        # Apply coordinate transformation for consistent visualization
+        original_pos = data[pos_attr]
+        transformed_pos = transform_coordinate(original_pos)
+        points.append(transformed_pos)
+        
         point_radii.append(data.get(radius_attr, 0.0))
         point_pressures.append(data.get(pressure_attr, np.nan)) 
 
@@ -364,19 +391,20 @@ if __name__ == '__main__':
     shutil.rmtree(test_data_dir)
     print(f"\nCleaned up temporary test directory: {test_data_dir}")
 
-def export_tissue_masks_to_vtk(tissue_data: dict, perfused_mask: np.ndarray, output_dir: str, iteration: int = -1):
+def export_tissue_masks_to_vtk(tissue_data: dict, perfused_mask: np.ndarray, output_dir: str, 
+                               iteration: int = -1, apply_coordinate_transform: bool = True):
     """
-    Exports tissue masks as VTK files for ParaView visualization.
+    Exports tissue masks as VTK files for ParaView visualization with coordinate transformation.
     
     Args:
         tissue_data: Dictionary containing tissue masks and affine
         perfused_mask: Current perfusion state
         output_dir: Output directory
         iteration: Current iteration number (-1 for final)
+        apply_coordinate_transform: If True, applies RAS-to-Blender coordinate transformation
     """
     try:
         import vtk
-        from vtk.util import numpy_support
     except ImportError:
         logger.warning("VTK not available. Cannot export tissue masks for ParaView.")
         return
@@ -393,45 +421,72 @@ def export_tissue_masks_to_vtk(tissue_data: dict, perfused_mask: np.ndarray, out
     # Determine file suffix
     suffix = f"_iter_{iteration}" if iteration >= 0 else "_final"
     
-    # List of masks to export
+    if apply_coordinate_transform:
+        logger.info(f"Applying RAS-to-Blender coordinate transformation for tissue VTK export (iteration {iteration})")
+    else:
+        logger.info(f"Exporting tissue masks as VTK for iteration {iteration} (no transformation)")
+    
+    # List of masks to export (including CSF)
     masks_to_export = {
         'perfused': perfused_mask,
         'GM': tissue_data.get('GM'),
         'WM': tissue_data.get('WM'),
+        'CSF': tissue_data.get('CSF'),
         'domain_mask': tissue_data.get('domain_mask'),
         'metabolic_demand': tissue_data.get('metabolic_demand_map')
     }
     
-    # Get voxel spacing from affine
+    # Get voxel spacing and origin from affine
     spacing = np.abs(np.diag(affine)[:3])
     origin = affine[:3, 3]
+    
+    # Apply coordinate transformation if requested (same as vessel VTK export)
+    if apply_coordinate_transform:
+        # RAS-to-Blender transformation: X->X, Y->-Z, Z->Y
+        # For image data, we need to transform spacing, origin, and potentially reorder axes
+        transformed_spacing = [float(spacing[0]), float(spacing[2]), float(spacing[1])]  # X, Z, Y
+        transformed_origin = [float(origin[0]), float(-origin[2]), float(origin[1])]     # X, -Z, Y
     
     for mask_name, mask_data in masks_to_export.items():
         if mask_data is None or (isinstance(mask_data, np.ndarray) and not np.any(mask_data)):
             continue
-            
-        # Create VTK image data
-        image_data = vtk.vtkImageData()
-        image_data.SetDimensions(mask_data.shape)
-        image_data.SetSpacing(spacing)
-        image_data.SetOrigin(origin)
         
-        # Convert numpy array to VTK array
-        if mask_data.dtype == bool:
-            vtk_data = numpy_support.numpy_to_vtk(
-                mask_data.astype(np.uint8).ravel(order='F'), 
-                deep=True, 
-                array_type=vtk.VTK_UNSIGNED_CHAR
-            )
+        # Apply coordinate transformation to mask data if requested
+        if apply_coordinate_transform:
+            # For RAS-to-Blender: X->X, Y->-Z, Z->Y
+            # This means we need to reorder axes: (X,Y,Z) -> (X,Z,Y) and flip Z
+            mask_data_transformed = np.transpose(mask_data, (0, 2, 1))  # X,Y,Z -> X,Z,Y
+            mask_data_transformed = np.flip(mask_data_transformed, axis=1)  # Flip Z axis
+            final_spacing = transformed_spacing
+            final_origin = transformed_origin
+            final_dimensions = mask_data_transformed.shape
         else:
-            vtk_data = numpy_support.numpy_to_vtk(
-                mask_data.astype(np.float32).ravel(order='F'), 
-                deep=True, 
-                array_type=vtk.VTK_FLOAT
-            )
+            mask_data_transformed = mask_data
+            final_spacing = [float(x) for x in spacing]
+            final_origin = [float(x) for x in origin]
+            final_dimensions = mask_data.shape
+            
+        # Create VTK image data using the proper method
+        image_data = vtk.vtkImageData()
+        image_data.SetDimensions(final_dimensions[0], final_dimensions[1], final_dimensions[2])
+        image_data.SetSpacing(final_spacing[0], final_spacing[1], final_spacing[2])
+        image_data.SetOrigin(final_origin[0], final_origin[1], final_origin[2])
         
-        vtk_data.SetName(mask_name)
-        image_data.GetPointData().SetScalars(vtk_data)
+        # Allocate scalars the VTK way
+        if mask_data_transformed.dtype == bool:
+            image_data.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+            data_as_uint8 = mask_data_transformed.astype(np.uint8)
+        else:
+            image_data.AllocateScalars(vtk.VTK_FLOAT, 1)
+            data_as_uint8 = mask_data_transformed.astype(np.float32)
+        
+        # Fill data point by point (this ensures correct memory layout)
+        dims = final_dimensions
+        for z in range(dims[2]):
+            for y in range(dims[1]):
+                for x in range(dims[0]):
+                    value = data_as_uint8[x, y, z]
+                    image_data.SetScalarComponentFromDouble(x, y, z, 0, float(value))
         
         # Write to file
         writer = vtk.vtkXMLImageDataWriter()

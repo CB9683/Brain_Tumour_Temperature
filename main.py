@@ -418,6 +418,14 @@ def main():
         if initial_arterial_graph and initial_arterial_graph.number_of_nodes() > 0 :
             try: io_utils.save_vascular_tree_vtp(initial_arterial_graph, os.path.join(output_dir, "debug_initial_arterial_graph_parsed.vtp"))
             except Exception as e_save_vtp: main_logger.error(f"Could not save initial parsed arterial graph: {e_save_vtp}")
+        
+        # Export initial tissue masks as VTK for ParaView visualization
+        if config_manager.get_param(config, "visualization.export_tissue_vtk", False):
+            try: 
+                empty_perfused_mask = np.zeros_like(tissue_data.get('domain_mask', np.zeros((10,10,10), dtype=bool)), dtype=bool)
+                io_utils.export_tissue_masks_to_vtk(tissue_data, empty_perfused_mask, output_dir, iteration=0)
+                main_logger.info("Exported initial tissue masks as VTK for ParaView")
+            except Exception as e_vtk: main_logger.error(f"Could not export initial tissue VTK: {e_vtk}")
 
     healthy_vascular_tree = None
     if config_manager.get_param(config, "gbo_growth.enabled", True):

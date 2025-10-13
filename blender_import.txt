@@ -1,0 +1,306 @@
+import bpy
+import vtk
+import numpy as np
+from mathutils import Vector, Matrix
+import os
+
+# ---------------------------------------------------
+# File paths
+# ---------------------------------------------------
+VTP_FILE = "/Users/c3495249/Coding/Gemini_Pro_Vasculature/output/simulation_results/20250623_110653_mida_gbo_seeds/blender_snapshot_iter_2/vascular_tree_iter_2.vtp"
+OBJ_FILE_1 = "/Users/c3495249/Desktop/perfused_mask_iter_2.nii.gz.obj"  # First mask
+OBJ_FILE_2 = "/Users/c3495249/Desktop/overall_domain_context_iter_2.nii.gz_1.obj"  # Second mask - UPDATE THIS PATH
+
+# ---------------------------------------------------
+# CONFIGURATION
+# ---------------------------------------------------
+BASE_RADIUS = 0.1
+RADIUS_SCALE = 2
+
+# The working transformation for VTK (RAS_TO_BLENDER_ALT)
+VTK_TRANSFORM = Matrix([
+    [1, 0, 0, 0],   # X (Right) stays X (Right)
+    [0, 0, -1, 0],  # Y (Anterior) becomes -Z (Down)
+    [0, 1, 0, 0],   # Z (Superior) becomes Y (Forward)
+    [0, 0, 0, 1]
+])
+
+# OBJ files use identity (no transformation needed)
+OBJ_TRANSFORM = Matrix.Identity(4)
+
+# ---------------------------------------------------
+# STEP 1: Import VTK vessel data
+# ---------------------------------------------------
+print("Importing VTK vessel data...")
+
+reader = vtk.vtkXMLPolyDataReader()
+reader.SetFileName(VTP_FILE)
+reader.Update()
+polydata = reader.GetOutput()
+
+points = polydata.GetPoints()
+lines = polydata.GetLines()
+point_data = polydata.GetPointData()
+cell_data = polydata.GetCellData()
+
+radii_array = point_data.GetArray("radius")
+flow_array = cell_data.GetArray("flow_solver")
+
+# Extract connectivity
+connectivity = []
+id_list = vtk.vtkIdList()
+lines.InitTraversal()
+while lines.GetNextCell(id_list):
+    connectivity.append([id_list.GetId(i) for i in range(id_list.GetNumberOfIds())])
+
+# Create vessel branches
+vessel_objects = []
+
+for branch_idx, branch in enumerate(connectivity):
+    curve_data = bpy.data.curves.new(f"Vessel_{branch_idx}", type='CURVE')
+    curve_data.dimensions = '3D'
+    spline = curve_data.splines.new('BEZIER')
+    spline.bezier_points.add(len(branch)-1)
+    
+    for i, point_id in enumerate(branch):
+        x, y, z = points.GetPoint(point_id)
+        
+        # Apply VTK transformation
+        coord_vec = Vector((x, y, z, 1))
+        transformed_coord = VTK_TRANSFORM @ coord_vec
+        
+        bez_point = spline.bezier_points[i]
+        bez_point.co = transformed_coord.xyz
+        bez_point.handle_left_type = 'AUTO'
+        bez_point.handle_right_type = 'AUTO'
+        
+        radius = radii_array.GetValue(point_id)
+        bez_point.radius = radius * RADIUS_SCALE
+    
+    curve_obj = bpy.data.objects.new(f"VesselObj_{branch_idx}", curve_data)
+    bpy.context.collection.objects.link(curve_obj)
+    vessel_objects.append(curve_obj)
+    
+    curve_data.bevel_depth = BASE_RADIUS
+    curve_data.use_fill_caps = True
+    
+    # Apply flow-based color if available
+    if flow_array:
+        flow_value = flow_array.GetValue(branch_idx)
+        mat = bpy.data.materials.new(name=f"FlowMat_{branch_idx}")
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        bsdf = nodes.get("Principled BSDF")
+        
+        normalized_flow = min(flow_value / 20.0, 1.0)
+        color = (normalized_flow, 0.2, 1.0 - normalized_flow, 1.0)
+        bsdf.inputs['Base Color'].default_value = color
+        curve_obj.data.materials.append(mat)
+
+print(f"Imported {len(vessel_objects)} vessel branches")
+
+# ---------------------------------------------------
+# STEP 2: Function to import OBJ masks
+# ---------------------------------------------------
+def import_obj_mask(filepath, mask_name, color=(0.2, 0.8, 0.2, 1.0), alpha=0.5):
+    """
+    Import an OBJ mask file with specified name and color
+    
+    Args:
+        filepath: Path to OBJ file
+        mask_name: Name prefix for the imported objects
+        color: RGBA color tuple for the material
+        alpha: Transparency value
+    
+    Returns:
+        List of imported objects
+    """
+    print(f"\nImporting {mask_name}...")
+    
+    # Check if file exists
+    if not os.path.exists(filepath):
+        print(f"Warning: File not found: {filepath}")
+        return []
+    
+    existing_objects = set(bpy.data.objects)
+    
+    # Import OBJ file
+    try:
+        bpy.ops.wm.obj_import(filepath=filepath)
+    except AttributeError:
+        try:
+            bpy.ops.import_scene.obj(filepath=filepath)
+        except Exception as e:
+            print(f"Error importing OBJ: {e}")
+            return []
+    
+    new_objects = set(bpy.data.objects) - existing_objects
+    imported_objects = list(new_objects)
+    
+    print(f"Imported {len(imported_objects)} objects for {mask_name}")
+    
+    # Apply transformation and materials to imported objects
+    for obj in imported_objects:
+        # Apply OBJ transformation (identity in this case)
+        obj.matrix_world = OBJ_TRANSFORM @ obj.matrix_world
+        
+        # Rename for clarity
+        if mask_name not in obj.name:
+            obj.name = f"{mask_name}_{obj.name}"
+        
+        # Add material
+        if len(obj.data.materials) == 0:
+            mat = bpy.data.materials.new(name=f"{mask_name}_Mat")
+            mat.use_nodes = True
+            nodes = mat.node_tree.nodes
+            bsdf = nodes.get("Principled BSDF")
+            bsdf.inputs['Base Color'].default_value = color
+            bsdf.inputs['Alpha'].default_value = alpha
+            mat.blend_method = 'BLEND'
+            mat.use_backface_culling = False
+            obj.data.materials.append(mat)
+            obj.show_transparent = True
+    
+    return imported_objects
+
+# ---------------------------------------------------
+# STEP 3: Import both masks
+# ---------------------------------------------------
+# Import first perfusion mask (green)
+perfusion_objects_1 = import_obj_mask(
+    OBJ_FILE_1, 
+    "PerfusionMask1",
+    color=(0.2, 0.8, 0.2, 1.0),  # Green
+    alpha=0.5
+)
+
+# Import second mask (blue)
+perfusion_objects_2 = import_obj_mask(
+    OBJ_FILE_2,
+    "PerfusionMask2", 
+    color=(0.2, 0.4, 0.8, 1.0),  # Blue
+    alpha=0.5
+)
+
+# Combine all perfusion objects for analysis
+all_perfusion_objects = perfusion_objects_1 + perfusion_objects_2
+
+# ---------------------------------------------------
+# STEP 4: Analyze alignment
+# ---------------------------------------------------
+def calculate_bounds(objects):
+    if not objects:
+        return None, None
+    
+    min_coords = Vector((float('inf'),) * 3)
+    max_coords = Vector((float('-inf'),) * 3)
+    
+    for obj in objects:
+        if hasattr(obj, 'bound_box'):
+            for corner in obj.bound_box:
+                world_corner = obj.matrix_world @ Vector(corner)
+                min_coords = Vector(min(min_coords[i], world_corner[i]) for i in range(3))
+                max_coords = Vector(max(max_coords[i], world_corner[i]) for i in range(3))
+    
+    return min_coords, max_coords
+
+print("\n=== ALIGNMENT ANALYSIS ===")
+
+# Analyze each set of objects
+vessel_min, vessel_max = calculate_bounds(vessel_objects)
+perfusion1_min, perfusion1_max = calculate_bounds(perfusion_objects_1)
+perfusion2_min, perfusion2_max = calculate_bounds(perfusion_objects_2)
+
+if vessel_min:
+    print(f"Vessels - Min: {vessel_min}, Max: {vessel_max}")
+if perfusion1_min:
+    print(f"Mask 1  - Min: {perfusion1_min}, Max: {perfusion1_max}")
+if perfusion2_min:
+    print(f"Mask 2  - Min: {perfusion2_min}, Max: {perfusion2_max}")
+
+# ---------------------------------------------------
+# STEP 5: Optional - Create collections for organization
+# ---------------------------------------------------
+# Create collections to organize objects
+def create_collection(name, parent_collection=None):
+    if name in bpy.data.collections:
+        return bpy.data.collections[name]
+    
+    new_collection = bpy.data.collections.new(name)
+    if parent_collection is None:
+        bpy.context.scene.collection.children.link(new_collection)
+    else:
+        parent_collection.children.link(new_collection)
+    return new_collection
+
+# Organize objects into collections
+vessel_collection = create_collection("Vessels")
+mask1_collection = create_collection("PerfusionMask1")
+mask2_collection = create_collection("PerfusionMask2")
+
+# Move objects to appropriate collections
+for obj in vessel_objects:
+    if obj.name in bpy.context.scene.collection.objects:
+        bpy.context.scene.collection.objects.unlink(obj)
+    vessel_collection.objects.link(obj)
+
+for obj in perfusion_objects_1:
+    if obj.name in bpy.context.scene.collection.objects:
+        bpy.context.scene.collection.objects.unlink(obj)
+    mask1_collection.objects.link(obj)
+
+for obj in perfusion_objects_2:
+    if obj.name in bpy.context.scene.collection.objects:
+        bpy.context.scene.collection.objects.unlink(obj)
+    mask2_collection.objects.link(obj)
+
+# ---------------------------------------------------
+# STEP 6: Frame all objects in viewport
+# ---------------------------------------------------
+bpy.ops.object.select_all(action='DESELECT')
+for obj in vessel_objects + all_perfusion_objects:
+    obj.select_set(True)
+
+for area in bpy.context.screen.areas:
+    if area.type == 'VIEW_3D':
+        ctx = bpy.context.copy()
+        ctx['area'] = area
+        ctx['region'] = area.regions[-1]
+        bpy.ops.view3d.view_selected(ctx)
+        break
+
+print("\n=== IMPORT COMPLETE ===")
+print(f"Imported:")
+print(f"  - {len(vessel_objects)} vessel branches")
+print(f"  - {len(perfusion_objects_1)} objects in mask 1 (green)")
+print(f"  - {len(perfusion_objects_2)} objects in mask 2 (blue)")
+print(f"\nObjects are organized in collections for easy visibility toggling")
+
+# ---------------------------------------------------
+# Additional helper functions
+# ---------------------------------------------------
+def toggle_mask_visibility(mask_number):
+    """Toggle visibility of a specific mask (1 or 2)"""
+    collection_name = f"PerfusionMask{mask_number}"
+    if collection_name in bpy.data.collections:
+        collection = bpy.data.collections[collection_name]
+        collection.hide_viewport = not collection.hide_viewport
+        print(f"Toggled visibility of {collection_name}")
+
+def set_mask_alpha(mask_number, alpha_value):
+    """Change transparency of a specific mask"""
+    mask_objects = perfusion_objects_1 if mask_number == 1 else perfusion_objects_2
+    for obj in mask_objects:
+        if obj.data.materials:
+            mat = obj.data.materials[0]
+            if mat.use_nodes:
+                bsdf = mat.node_tree.nodes.get("Principled BSDF")
+                if bsdf:
+                    bsdf.inputs['Alpha'].default_value = alpha_value
+    print(f"Set mask {mask_number} alpha to {alpha_value}")
+
+# Example usage:
+# toggle_mask_visibility(1)  # Toggle first mask
+# toggle_mask_visibility(2)  # Toggle second mask
+# set_mask_alpha(1, 0.3)     # Make first mask more transparent
+# set_mask_alpha(2, 0.7)     # Make second mask less transparent3

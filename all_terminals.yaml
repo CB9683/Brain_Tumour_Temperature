@@ -1,0 +1,356 @@
+  seed_points: # Use all 89 arterial terminal coordinates as seed points for GBO growth
+  - id: outlet_1
+    position: [-60.125883, -11.242233, 40.87413]
+    initial_radius: 0.499972
+
+  - id: outlet_2
+    position: [-60.743472, 18.609706, 35.421612]
+    initial_radius: 0.499972
+
+  - id: outlet_3
+    position: [-54.227628, 5.751337, 46.633032]
+    initial_radius: 0.499972
+
+  - id: outlet_4
+    position: [-54.325691, 23.558485, 39.551682]
+    initial_radius: 0.499972
+
+  - id: outlet_5
+    position: [-46.00583, -29.378987, 47.497986]
+    initial_radius: 0.499972
+
+  - id: outlet_6
+    position: [-48.369576, 39.50048, 59.858463]
+    initial_radius: 0.499972
+
+  - id: outlet_7
+    position: [-44.610776, 15.225551, 62.522497]
+    initial_radius: 0.499972
+
+  - id: outlet_8
+    position: [-43.606428, 53.760691, 43.720101]
+    initial_radius: 0.499972
+
+  - id: outlet_9
+    position: [-42.511737, 50.18005, 55.812685]
+    initial_radius: 0.499972
+
+  - id: outlet_10
+    position: [-39.324847, 35.807444, 55.67192]
+    initial_radius: 0.499972
+
+  - id: outlet_11
+    position: [-41.026059, 48.795883, 24.774406]
+    initial_radius: 0.499972
+
+  - id: outlet_12
+    position: [-39.419593, 33.685818, 35.722242]
+    initial_radius: 0.499972
+
+  - id: outlet_13
+    position: [-38.879039, 41.655443, 33.443528]
+    initial_radius: 0.499972
+
+  - id: outlet_14
+    position: [-36.181138, 4.598263, 45.567331]
+    initial_radius: 0.499972
+
+  - id: outlet_15
+    position: [-39.143101, 51.918813, 25.611324]
+    initial_radius: 0.499972
+
+  - id: outlet_16
+    position: [-34.174923, -17.966895, 57.744712]
+    initial_radius: 0.499972
+
+  - id: outlet_17
+    position: [-34.732182, -1.128722, 36.194422]
+    initial_radius: 0.499972
+
+  - id: outlet_18
+    position: [-36.326905, 49.274676, 16.593312]
+    initial_radius: 0.499972
+
+  - id: outlet_19
+    position: [-31.843522, -10.775024, -37.669277]
+    initial_radius: 1.58105
+
+  - id: outlet_20
+    position: [-32.282948, 7.808294, -67.789311]
+    initial_radius: 1.499916
+
+  - id: outlet_21
+    position: [-28.828838, 53.305289, 21.718176]
+    initial_radius: 0.499972
+
+  - id: outlet_22
+    position: [-30.02962, 1.541989, -112.209485]
+    initial_radius: 2.061437
+
+  - id: outlet_23
+    position: [-27.783162, 51.892598, 6.71284]
+    initial_radius: 0.499972
+
+  - id: outlet_24
+    position: [-25.382952, 40.292062, 16.519257]
+    initial_radius: 0.499972
+
+  - id: outlet_25
+    position: [-21.774519, 31.097004, 21.201894]
+    initial_radius: 0.499972
+
+  - id: outlet_26
+    position: [-23.390549, -12.180469, -112.987145]
+    initial_radius: 1.414134
+
+  - id: outlet_27
+    position: [-20.613918, 59.786938, 7.71903]
+    initial_radius: 0.499972
+
+  - id: outlet_28
+    position: [-15.60825, -13.137728, 22.430787]
+    initial_radius: 0.499972
+
+  - id: outlet_29
+    position: [-15.063069, -0.395561, 12.488996]
+    initial_radius: 0.499972
+
+  - id: outlet_30
+    position: [-13.125915, -25.119387, 19.733287]
+    initial_radius: 0.499972
+
+  - id: outlet_31
+    position: [-14.571368, 8.572397, 10.179532]
+    initial_radius: 0.499972
+
+  - id: outlet_32
+    position: [-11.346387, -26.404075, 40.237738]
+    initial_radius: 0.499972
+
+  - id: outlet_33
+    position: [-13.589196, 1.222188, 13.888936]
+    initial_radius: 0.499972
+
+  - id: outlet_34
+    position: [-15.272259, 37.758526, 15.763302]
+    initial_radius: 0.499972
+
+  - id: outlet_35
+    position: [-12.346851, -3.721708, 14.007813]
+    initial_radius: 0.499972
+
+  - id: outlet_36
+    position: [-14.038841, 32.283063, 14.898637]
+    initial_radius: 0.499972
+
+  - id: outlet_37
+    position: [-9.727624, -36.672156, 29.504829]
+    initial_radius: 0.499972
+
+  - id: outlet_38
+    position: [-12.046978, 36.61957, 6.182268]
+    initial_radius: 0.499972
+
+  - id: outlet_39
+    position: [-7.039232, -18.985555, 30.343013]
+    initial_radius: 0.499972
+
+  - id: outlet_40
+    position: [-9.721224, 25.4696, 14.474931]
+    initial_radius: 0.499972
+
+  - id: outlet_41
+    position: [-7.080408, 82.327098, 67.602106]
+    initial_radius: 0.499972
+
+  - id: outlet_42
+    position: [-6.234246, 74.507846, 23.779829]
+    initial_radius: 0.499972
+
+  - id: outlet_43
+    position: [-0.374129, 13.978901, 65.590772]
+    initial_radius: 0.499972
+
+  - id: outlet_44
+    position: [-0.646413, 54.624178, 84.803708]
+    initial_radius: 0.499972
+
+  - id: outlet_45
+    position: [1.556504, 15.056566, 64.990813]
+    initial_radius: 0.499972
+
+  - id: outlet_46
+    position: [1.822759, 8.056679, 48.691102]
+    initial_radius: 0.499972
+
+  - id: outlet_47
+    position: [2.214776, 38.827392, 87.72326]
+    initial_radius: 0.499972
+
+  - id: outlet_48
+    position: [-0.766318, 46.912244, 13.480427]
+    initial_radius: 0.499972
+
+  - id: outlet_49
+    position: [3.255528, 10.157394, 49.576207]
+    initial_radius: 0.499972
+
+  - id: outlet_50
+    position: [0.018989, 57.734106, 22.112938]
+    initial_radius: 0.499972
+
+  - id: outlet_51
+    position: [0.606317, 47.385858, 10.415985]
+    initial_radius: 0.499972
+
+  - id: outlet_52
+    position: [2.951807, 69.259428, 50.172044]
+    initial_radius: 0.499972
+
+  - id: outlet_53
+    position: [6.288129, 37.005591, 87.145803]
+    initial_radius: 0.499972
+
+  - id: outlet_54
+    position: [2.615562, 82.652039, 30.227758]
+    initial_radius: 0.499972
+
+  - id: outlet_55
+    position: [9.84671, -24.589373, 32.964214]
+    initial_radius: 0.499972
+
+  - id: outlet_56
+    position: [8.164924, 50.11953, 87.158321]
+    initial_radius: 0.499972
+
+  - id: outlet_57
+    position: [10.766822, 10.478599, 64.331234]
+    initial_radius: 0.499972
+
+  - id: outlet_58
+    position: [8.843043, 3.96571, -13.978288]
+    initial_radius: 0.499972
+
+  - id: outlet_59
+    position: [7.734148, 84.460088, 64.535565]
+    initial_radius: 0.499972
+
+  - id: outlet_60
+    position: [10.366945, 5.63206, -11.07997]
+    initial_radius: 0.499972
+
+  - id: outlet_61
+    position: [8.074613, -10.128067, -112.602694]
+    initial_radius: 1.414134
+
+  - id: outlet_62
+    position: [12.628428, -4.073653, 11.683696]
+    initial_radius: 0.499972
+
+  - id: outlet_63
+    position: [17.850062, -31.110693, 52.429626]
+    initial_radius: 0.499972
+
+  - id: outlet_64
+    position: [13.484026, 34.193, 16.920964]
+    initial_radius: 0.499972
+
+  - id: outlet_65
+    position: [17.643584, -6.673223, 65.659036]
+    initial_radius: 0.499972
+
+  - id: outlet_66
+    position: [17.83911, -24.72261, 32.201133]
+    initial_radius: 0.499972
+
+  - id: outlet_67
+    position: [19.204377, 9.519078, 3.515119]
+    initial_radius: 0.499972
+
+  - id: outlet_68
+    position: [21.62416, 32.111699, 17.717761]
+    initial_radius: 0.499972
+
+  - id: outlet_69
+    position: [23.181969, 3.359101, 8.587526]
+    initial_radius: 0.499972
+
+  - id: outlet_70
+    position: [20.486145, 57.735821, 5.912713]
+    initial_radius: 0.499972
+
+  - id: outlet_71
+    position: [20.705311, 8.858603, -69.092082]
+    initial_radius: 0.999944
+
+  - id: outlet_72
+    position: [23.239263, 6.401186, -71.599688]
+    initial_radius: 1.117971
+
+  - id: outlet_73
+    position: [28.263456, -21.075624, 20.222326]
+    initial_radius: 0.499972
+
+  - id: outlet_74
+    position: [28.330492, -11.997307, 5.910466]
+    initial_radius: 0.499972
+
+  - id: outlet_75
+    position: [28.174505, 45.156663, 8.066182]
+    initial_radius: 0.499972
+
+  - id: outlet_76
+    position: [33.797527, 44.379362, 38.937214]
+    initial_radius: 0.499972
+
+  - id: outlet_77
+    position: [33.052884, 49.469825, 10.266103]
+    initial_radius: 0.499972
+
+  - id: outlet_78
+    position: [44.074905, 42.592638, 29.642266]
+    initial_radius: 0.499972
+
+  - id: outlet_79
+    position: [44.749149, 35.466191, 24.84549]
+    initial_radius: 0.499972
+
+  - id: outlet_80
+    position: [44.145472, 54.811755, 19.733288]
+    initial_radius: 0.499972
+
+  - id: outlet_81
+    position: [45.560469, 55.264528, 32.184892]
+    initial_radius: 0.499972
+
+  - id: outlet_82
+    position: [54.332625, -4.155186, 72.861543]
+    initial_radius: 0.499972
+
+  - id: outlet_83
+    position: [52.772576, 8.447488, 45.475619]
+    initial_radius: 0.499972
+
+  - id: outlet_84
+    position: [50.813679, 44.777863, 24.841511]
+    initial_radius: 0.499972
+
+  - id: outlet_85
+    position: [56.185466, -20.408622, 46.29763]
+    initial_radius: 0.499972
+
+  - id: outlet_86
+    position: [54.68423, 31.654277, 31.644986]
+    initial_radius: 0.499972
+
+  - id: outlet_87
+    position: [62.440502, -4.637146, 60.593464]
+    initial_radius: 0.499972
+
+  - id: outlet_88
+    position: [60.649826, 17.676491, 39.90784]
+    initial_radius: 0.499972
+
+  - id: outlet_89
+    position: [63.7165, 24.288874, 22.072018]
+    initial_radius: 0.499972
