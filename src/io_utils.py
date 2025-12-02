@@ -436,41 +436,59 @@ def export_tissue_masks_to_vtk(tissue_data: dict, perfused_mask: np.ndarray, out
         'metabolic_demand': tissue_data.get('metabolic_demand_map')
     }
     
-    # Get voxel spacing and origin from affine
-    spacing = np.abs(np.diag(affine)[:3])
+    # Helper to set VTK direction matrix robustly across VTK versions
+    def _set_vtk_direction(image_data, direction_matrix: np.ndarray):
+        """Assigns a 3x3 direction matrix to vtkImageData, handling API differences."""
+        flat_dir = direction_matrix.astype(float).ravel()
+        if hasattr(image_data, "SetDirectionMatrix"):
+            vtk_matrix = vtk.vtkMatrix3x3()
+            for i in range(3):
+                for j in range(3):
+                    vtk_matrix.SetElement(i, j, direction_matrix[i, j])
+            image_data.SetDirectionMatrix(vtk_matrix)
+        elif hasattr(image_data, "SetDirection"):
+            image_data.SetDirection(flat_dir)
+        else:
+            logger.warning("VTK version does not support image direction matrices; orientation may be incorrect in ParaView.")
+
+    # Compute physical step matrix from affine (columns are step vectors in RAS)
+    step_matrix = affine[:3, :3]
     origin = affine[:3, 3]
-    
-    # Apply coordinate transformation if requested (same as vessel VTK export)
+
+    # Optional RAS-to-Blender transform (matches vessel export: X,Y,Z -> X,-Z,Y)
     if apply_coordinate_transform:
-        # RAS-to-Blender transformation: X->X, Y->-Z, Z->Y
-        # For image data, we need to transform spacing, origin, and potentially reorder axes
-        transformed_spacing = [float(spacing[0]), float(spacing[2]), float(spacing[1])]  # X, Z, Y
-        transformed_origin = [float(origin[0]), float(-origin[2]), float(origin[1])]     # X, -Z, Y
+        ras_to_blender = np.array([
+            [1.0,  0.0,  0.0],
+            [0.0,  0.0, -1.0],
+            [0.0,  1.0,  0.0]
+        ])
+        step_matrix = ras_to_blender @ step_matrix
+        origin = ras_to_blender @ origin
+        logger.info(f"Applying RAS-to-Blender coordinate transformation for tissue VTK export (iteration {iteration})")
+    else:
+        logger.info(f"Exporting tissue masks as VTK for iteration {iteration} (no transformation)")
+
+    # Derive spacing and direction from the transformed step matrix
+    spacing = np.linalg.norm(step_matrix, axis=0)
+    spacing_safe = np.where(spacing > 0, spacing, 1.0)  # Avoid divide-by-zero
+    direction = step_matrix / spacing_safe
     
     for mask_name, mask_data in masks_to_export.items():
         if mask_data is None or (isinstance(mask_data, np.ndarray) and not np.any(mask_data)):
             continue
         
-        # Apply coordinate transformation to mask data if requested
-        if apply_coordinate_transform:
-            # For RAS-to-Blender: X->X, Y->-Z, Z->Y
-            # This means we need to reorder axes: (X,Y,Z) -> (X,Z,Y) and flip Z
-            mask_data_transformed = np.transpose(mask_data, (0, 2, 1))  # X,Y,Z -> X,Z,Y
-            mask_data_transformed = np.flip(mask_data_transformed, axis=1)  # Flip Z axis
-            final_spacing = transformed_spacing
-            final_origin = transformed_origin
-            final_dimensions = mask_data_transformed.shape
-        else:
-            mask_data_transformed = mask_data
-            final_spacing = [float(x) for x in spacing]
-            final_origin = [float(x) for x in origin]
-            final_dimensions = mask_data.shape
+        # Keep voxel ordering; rely on direction/origin/spacing for correct world placement
+        mask_data_transformed = mask_data
+        final_spacing = [float(x) for x in spacing_safe]
+        final_origin = [float(x) for x in origin]
+        final_dimensions = mask_data_transformed.shape
             
         # Create VTK image data using the proper method
         image_data = vtk.vtkImageData()
         image_data.SetDimensions(final_dimensions[0], final_dimensions[1], final_dimensions[2])
         image_data.SetSpacing(final_spacing[0], final_spacing[1], final_spacing[2])
         image_data.SetOrigin(final_origin[0], final_origin[1], final_origin[2])
+        _set_vtk_direction(image_data, direction)
         
         # Allocate scalars the VTK way
         if mask_data_transformed.dtype == bool:
